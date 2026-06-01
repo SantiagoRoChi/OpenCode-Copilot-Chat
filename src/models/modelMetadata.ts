@@ -1,14 +1,15 @@
 import { ZenModelDefinition } from '../client/types';
 
 const ZEN_BASE_URL = 'https://opencode.ai/zen/v1';
+const GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
 
-function openaiCompatible(id: string, displayName: string, family: string, contextInput: number, contextOutput: number, pricing: { input: number; output: number }, caps: Partial<ZenModelDefinition['capabilities']> = {}): ZenModelDefinition {
+function openaiCompatible(id: string, displayName: string, family: string, contextInput: number, contextOutput: number, pricing: { input: number; output: number }, caps: Partial<ZenModelDefinition['capabilities']> = {}, baseUrl: string = ZEN_BASE_URL): ZenModelDefinition {
   return {
     id,
     displayName,
     family,
-    provider: 'opencode',
-    endpoint: `${ZEN_BASE_URL}/chat/completions`,
+    provider: baseUrl === GO_BASE_URL ? 'opencode-go' : 'opencode',
+    endpoint: `${baseUrl}/chat/completions`,
     apiFormat: 'openai-compatible',
     status: 'active',
     capabilities: {
@@ -25,17 +26,18 @@ function openaiCompatible(id: string, displayName: string, family: string, conte
       ...(caps.reasoning ? ['reasoning'] : []),
       ...(caps.toolCalling ? ['tools'] : []),
       ...(caps.imageInput ? ['vision'] : []),
+      ...(baseUrl === GO_BASE_URL ? ['go'] : []),
     ],
   };
 }
 
-function anthropicCompatible(id: string, displayName: string, family: string, contextInput: number, contextOutput: number, pricing: { input: number; output: number }, caps: Partial<ZenModelDefinition['capabilities']> = {}): ZenModelDefinition {
+function anthropicCompatible(id: string, displayName: string, family: string, contextInput: number, contextOutput: number, pricing: { input: number; output: number }, caps: Partial<ZenModelDefinition['capabilities']> = {}, baseUrl: string = ZEN_BASE_URL): ZenModelDefinition {
   return {
     id,
     displayName,
     family,
-    provider: 'opencode',
-    endpoint: `${ZEN_BASE_URL}/messages`,
+    provider: baseUrl === GO_BASE_URL ? 'opencode-go' : 'opencode',
+    endpoint: `${baseUrl}/messages`,
     apiFormat: 'anthropic',
     status: 'active',
     capabilities: {
@@ -52,6 +54,7 @@ function anthropicCompatible(id: string, displayName: string, family: string, co
       ...(caps.reasoning ? ['reasoning'] : []),
       ...(caps.toolCalling !== false ? ['tools'] : []),
       ...(caps.imageInput !== false ? ['vision'] : []),
+      ...(baseUrl === GO_BASE_URL ? ['go'] : []),
     ],
   };
 }
@@ -124,4 +127,23 @@ export const BUILTIN_MODELS: ZenModelDefinition[] = [
   openaiCompatible('kimi-k2.5', 'Kimi K2.5', 'kimi', 131072, 32000, { input: 0.6, output: 3.0 }, { reasoning: true, toolCalling: true }),
   openaiCompatible('kimi-k2.6', 'Kimi K2.6', 'kimi', 131072, 32000, { input: 0.95, output: 4.0 }, { reasoning: true, toolCalling: true }),
   openaiCompatible('grok-build-0.1', 'Grok Build 0.1', 'grok', 131072, 32000, { input: 1.0, output: 2.0 }, { reasoning: true, toolCalling: true }),
+
+  // ═══════════════════════════════════════════════════════════
+  // OPENCODE GO MODELS (Low-cost subscription)
+  // ═══════════════════════════════════════════════════════════
+  // Go OpenAI-compatible models
+  openaiCompatible('deepseek-v4-pro', 'DeepSeek V4 Pro (Go)', 'deepseek', 131072, 131072, { input: 1.74, output: 3.48 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  openaiCompatible('deepseek-v4-flash', 'DeepSeek V4 Flash (Go)', 'deepseek', 131072, 131072, { input: 0.14, output: 0.28 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  openaiCompatible('mimo-v2.5', 'MiMo-V2.5 (Go)', 'mimo', 131072, 131072, { input: 0.14, output: 0.28 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  openaiCompatible('mimo-v2.5-pro', 'MiMo-V2.5 Pro (Go)', 'mimo', 131072, 131072, { input: 1.74, output: 3.48 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  openaiCompatible('glm-5', 'GLM-5 (Go)', 'glm', 131072, 32000, { input: 1.0, output: 3.2 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  openaiCompatible('glm-5.1', 'GLM-5.1 (Go)', 'glm', 131072, 32000, { input: 1.4, output: 4.4 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  openaiCompatible('kimi-k2.5', 'Kimi K2.5 (Go)', 'kimi', 131072, 32000, { input: 0.6, output: 3.0 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  openaiCompatible('kimi-k2.6', 'Kimi K2.6 (Go)', 'kimi', 131072, 32000, { input: 0.95, output: 4.0 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  // Go Anthropic-compatible models
+  anthropicCompatible('minimax-m3', 'MiniMax M3 (Go)', 'minimax', 204800, 131072, { input: 0.6, output: 2.4 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  anthropicCompatible('minimax-m2.7', 'MiniMax M2.7 (Go)', 'minimax', 204800, 131072, { input: 0.3, output: 1.2 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  anthropicCompatible('minimax-m2.5', 'MiniMax M2.5 (Go)', 'minimax', 204800, 131072, { input: 0.3, output: 1.2 }, { reasoning: true, toolCalling: true }, GO_BASE_URL),
+  anthropicCompatible('qwen3.7-max', 'Qwen3.7 Max (Go)', 'qwen', 131072, 32000, { input: 2.5, output: 7.5 }, { reasoning: true }, GO_BASE_URL),
+  anthropicCompatible('qwen3.6-plus', 'Qwen3.6 Plus (Go)', 'qwen', 131072, 32000, { input: 0.5, output: 3.0 }, { reasoning: true }, GO_BASE_URL),
 ];

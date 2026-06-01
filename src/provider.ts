@@ -44,7 +44,7 @@ export class ZenProvider implements vscode.LanguageModelChatProvider {
   private readonly _onDidChangeStatusSnapshot = new vscode.EventEmitter<void>();
   readonly onDidChangeStatusSnapshot = this._onDidChangeStatusSnapshot.event;
 
-  private readonly sessionStats: SessionStats = { requestCount: 0, totalTokens: { prompt: 0, completion: 0, total: 0 } };
+  private sessionStats: SessionStats = { requestCount: 0, totalTokens: { prompt: 0, completion: 0, total: 0 } };
   private lastRequest?: LastRequest;
   private lastSuccessfulFetchAt?: number;
   private lastConnectionError?: string;

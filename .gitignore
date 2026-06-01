@@ -1,0 +1,9 @@
+out/
+node_modules/
+*.vsix
+dist/
+.vscode-test/
+*.log
+.agents/
+skills-lock.json
+.vscode-test-web/

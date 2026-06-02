@@ -581,19 +581,24 @@ async provideLanguageModelChatResponse(
     if (!options.tools || options.tools.length === 0) {
       return { tools: undefined, schemas };
     }
-    const tools: ToolDefinition[] = options.tools.map(tool => {
+    const tools: ToolDefinition[] = [];
+    for (const tool of options.tools) {
       const schema = tool.inputSchema as Record<string, unknown> | undefined;
+      // Skip tools with empty/invalid schemas — some providers reject them
+      if (!schema || (typeof schema === 'object' && Object.keys(schema).length === 0)) {
+        continue;
+      }
       schemas.set(tool.name, schema);
-      return {
+      tools.push({
         type: 'function',
         function: {
           name: tool.name,
           description: tool.description,
           parameters: schema,
         },
-      };
-    });
-    return { tools, schemas };
+      });
+    }
+    return { tools: tools.length > 0 ? tools : undefined, schemas };
   }
 
   private mapToolChoice(mode: vscode.LanguageModelChatToolMode | undefined): 'auto' | 'required' | 'none' | undefined {

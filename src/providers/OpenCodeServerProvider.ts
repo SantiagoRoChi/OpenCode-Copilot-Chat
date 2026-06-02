@@ -116,23 +116,27 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
 
   async fetchModels(): Promise<void> {
     try {
+      this.outputChannel.appendLine(`[ServerProvider] fetchModels() called, baseUrl=${this.baseUrl}`);
       this.outputChannel.appendLine(`[ServerProvider] Calling getProviders()...`);
       const providers = await this.serverClient.getProviders();
       if (!providers) {
-        this.outputChannel.appendLine(`[ServerProvider] getProviders() returned null/undefined`);
+        this.outputChannel.appendLine(`[ServerProvider] getProviders() returned null/undefined - server may not be reachable`);
         return;
       }
-      this.outputChannel.appendLine(`[ServerProvider] got ${providers.all?.length || 0} providers, ${providers.connected?.length || 0} connected`);
+      this.outputChannel.appendLine(`[ServerProvider] got providers: all=${JSON.stringify(providers.all?.map((p: any) => p.id))}, connected=${JSON.stringify(providers.connected)}`);
 
       const allModels: vscode.LanguageModelChatInformation[] = [];
       const connectedIds = providers.connected || [];
 
       for (const provider of providers.all || []) {
         const isConnected = provider.connected || connectedIds.includes(provider.id);
-        if (!isConnected) continue;
+        if (!isConnected) {
+          this.outputChannel.appendLine(`[ServerProvider] Skipping provider "${provider.name}" (not connected)`);
+          continue;
+        }
 
         const modelEntries = Object.entries(provider.models || {}) as [string, any][];
-        this.outputChannel.appendLine(`[ServerProvider] Provider "${provider.name}" has ${modelEntries.length} models, connected=${isConnected}`);
+        this.outputChannel.appendLine(`[ServerProvider] Provider "${provider.name}" (${provider.id}): ${modelEntries.length} models, connected=${isConnected}`);
         for (const [modelId, modelData] of modelEntries) {
           const info: ServerModelInfo = {
             id: modelId,

@@ -119,6 +119,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       context.subscriptions.push(disposable);
       context.subscriptions.push(provider);
       console.log(`OpenCode Zen: registered server provider "${vendorId}" for "${conn.config.name}"`);
+
+      // Trigger VS Code to query models from this provider
+      provider.refreshModels();
     }
   }
 

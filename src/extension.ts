@@ -20,7 +20,7 @@ let treeProvider: OpenCodeTreeProvider;
 let connector: OpenCodeConnector;
 let secretStorage: SecretStorage;
 let serverManager: MultiServerManager;
-let serverProviders: OpenCodeServerProvider[] = [];
+let serverProvider: OpenCodeServerProvider;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   console.log('OpenCode Zen: activating...');
@@ -103,26 +103,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.showInformationMessage(`OpenCode: ${connectedList.length} server(s) connected.`).then();
   }
 
-  for (const conn of serverManager.getConnectedList()) {
-    const vendorId = `opencode-server-${conn.config.id}`;
-    const existing = serverProviders.find(p => p.vendor === vendorId);
-    if (!existing) {
-      const provider = new OpenCodeServerProvider(
-        context,
-        conn.config.id,
-        conn.config.name,
-        conn.info.baseUrl,
-        conn.client
-      );
-      serverProviders.push(provider);
-      const disposable = vscode.lm.registerLanguageModelChatProvider(vendorId, provider);
-      context.subscriptions.push(disposable);
-      context.subscriptions.push(provider);
-      console.log(`OpenCode Zen: registered server provider "${vendorId}" for "${conn.config.name}"`);
+  // Register single server provider for ALL connected servers
+  serverProvider = new OpenCodeServerProvider();
+  context.subscriptions.push(
+    vscode.lm.registerLanguageModelChatProvider('opencode-server', serverProvider)
+  );
+  context.subscriptions.push(serverProvider);
 
-      // Trigger VS Code to query models from this provider
-      provider.refreshModels();
-    }
+  for (const conn of serverManager.getConnectedList()) {
+    serverProvider.addServer({
+      serverId: conn.config.id,
+      serverName: conn.config.name,
+      baseUrl: conn.info.baseUrl,
+      client: conn.client,
+      connected: true,
+    });
   }
 
   context.subscriptions.push(
@@ -186,7 +181,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     zenProvider.refreshModels();
     goProvider.refreshModels();
     freeProvider.refreshModels();
-    serverProviders.forEach(p => p.refreshModels());
+    serverProvider?.refreshModels();
     vscode.window.showInformationMessage('OpenCode Zen: All models refreshed.');
     void updateWebview();
   };
@@ -384,7 +379,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
       zenProvider.getUsageTracker().clear();
       goProvider.getUsageTracker().clear();
       freeProvider.getUsageTracker().clear();
-      serverProviders.forEach(p => p.getUsageTracker().clear());
+      serverProvider?.getUsageTracker().clear();
       vscode.window.showInformationMessage('OpenCode Zen: Usage stats cleared.');
       void updateWebview();
     }),

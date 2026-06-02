@@ -88,6 +88,11 @@
             }
           }
         }
+      },
+      {
+        "vendor": "opencode-server",
+        "displayName": "OpenCode Servers",
+        "configuration": {}
       }
     ],
     "commands": [

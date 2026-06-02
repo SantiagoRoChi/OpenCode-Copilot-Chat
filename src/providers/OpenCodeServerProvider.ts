@@ -325,7 +325,9 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
 
       const decoder = new TextDecoder();
       let buffer = '';
-      const chunks: any[] = [];
+      let lineCount = 0;
+
+      this.outputChannel.appendLine(`[${entry.serverName}] Reading SSE stream...`);
 
       const controller = new ReadableStream({
         start: async (rc) => {
@@ -341,26 +343,45 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
                 if (!trimmed || trimmed.startsWith(':')) continue;
                 if (trimmed.startsWith('data: ')) {
                   const data = trimmed.slice(6);
-                  if (data === '[DONE]') { rc.close(); return; }
+                  if (data === '[DONE]') {
+                    this.outputChannel.appendLine(`[${entry.serverName}] SSE: [DONE] after ${lineCount} lines`);
+                    rc.close(); return;
+                  }
                   try {
                     const chunk = JSON.parse(data);
                     rc.enqueue(chunk);
-                  } catch {}
+                    lineCount++;
+                    if (lineCount <= 3) {
+                      this.outputChannel.appendLine(`[${entry.serverName}] SSE chunk ${lineCount}: model=${chunk.model}, choices=${chunk.choices?.length}`);
+                    }
+                  } catch (e) {
+                    this.outputChannel.appendLine(`[${entry.serverName}] SSE parse error: ${e} — data: "${data.slice(0, 100)}"`);
+                  }
                 }
               }
             }
+            this.outputChannel.appendLine(`[${entry.serverName}] SSE stream ended, ${lineCount} chunks`);
             rc.close();
-          } catch (err) { rc.error(err); }
+          } catch (err) {
+            this.outputChannel.appendLine(`[${entry.serverName}] SSE stream error: ${err}`);
+            rc.error(err);
+          }
         },
       });
 
       const reporter: StreamReporter = {
         requestId,
         sessionId: entry.serverId,
-        reportText: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
+        reportText: (text) => {
+          this.outputChannel.appendLine(`[${entry.serverName}] TEXT(${text.length}): "${text.slice(0, 80)}..."`);
+          progress.report(new vscode.LanguageModelTextPart(text));
+        },
         reportThinking: () => {},
         reportThinkingDone: () => {},
-        reportToolCall: (id, name, args) => progress.report(new vscode.LanguageModelToolCallPart(id, name, args)),
+        reportToolCall: (id, name, args) => {
+          this.outputChannel.appendLine(`[${entry.serverName}] TOOL: ${name}`);
+          progress.report(new vscode.LanguageModelToolCallPart(id, name, args));
+        },
         reportUsage: (usage) => {
           this.trackUsage(usage);
         },
@@ -368,8 +389,9 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
         reportThinkingBlock: () => {},
       };
 
+      this.outputChannel.appendLine(`[${entry.serverName}] Starting streamResponse...`);
       await streamResponse({
-        chunks: chunks.length > 0 ? new ReadableStream({ start: (c) => { chunks.forEach(chunk => c.enqueue(chunk)); c.close(); } }) : controller as any,
+        chunks: controller as any,
         reporter,
         isCancelled: () => token.isCancellationRequested,
         resolveToolCallArgs: (tc) => {

@@ -29,6 +29,7 @@ export interface ServerModelInfo {
   id: string;
   name: string;
   family: string;
+  providerID: string;
   maxInputTokens: number;
   maxOutputTokens: number;
   contextLabel: string;
@@ -167,12 +168,15 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
             const toolCalling = matchedCaps?.toolCalling ?? true;
             const reasoning = matchedCaps?.reasoning ?? false;
             const name = matchedCaps?.name ?? (modelData.name || modelId.split('/').pop() || modelId);
-            const family = matchedCaps?.family ?? modelId.split('-')[0];
+            // Use the server's actual provider ID, not inferred from model name
+            const providerID = provider.id;
+            const family = provider.name;
 
             const info: ServerModelInfo = {
               id: modelId,
               name,
               family,
+              providerID,
               maxInputTokens: maxInput,
               maxOutputTokens: maxOutput,
               contextLabel: `${Math.round(maxInput / 1000)}K`,
@@ -325,7 +329,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
       const serverModelId = modelId.split(':').pop() || modelId;
 
       const requestBody: any = {
-        model: { providerID: info.family, modelID: serverModelId },
+        model: { providerID: info.providerID, modelID: serverModelId },
         parts: textParts,
       };
 

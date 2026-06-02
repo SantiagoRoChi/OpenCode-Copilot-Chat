@@ -115,8 +115,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     configTree.update(zenKey, goKey);
 
-    let zenStatus: 'pending' | 'error' | 'ok' = 'pending';
-    let goStatus: 'pending' | 'error' | 'ok' = 'pending';
+    let zenStatus: 'pending' | 'error' | 'ok' | 'no-endpoint' = 'pending';
+    let goStatus: 'pending' | 'error' | 'ok' | 'no-endpoint' = 'pending';
     let zenUsage: any;
     let goUsage: any;
 
@@ -132,7 +132,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       goStatus = 'error';
     }
 
-    globalTree.update({ zenKey, goKey, zenStatus, goStatus, zenUsage: zenUsage || undefined, goUsage: goUsage || undefined });
+    globalTree.update({
+      zenKey, goKey,
+      zenStatus, goStatus,
+      zenFamilies: zenProvider.getModelFamilies(),
+      goFamilies: goProvider.getModelFamilies(),
+      zenUsage: zenUsage || undefined,
+      goUsage: goUsage || undefined,
+    });
   };
 
   const onUsageChange = () => { void updateAllTrees(); };
@@ -213,7 +220,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand('opencode-zen.refreshTree', () => sessionTree.refresh()),
     vscode.commands.registerCommand('opencode-zen.refreshGlobal', async () => {
-      await globalTree.refresh(zenProvider, goProvider);
+      zenProvider.refreshModels();
+      goProvider.refreshModels();
+      await updateAllTrees();
       vscode.window.showInformationMessage('Global usage refreshed.');
     }),
     vscode.commands.registerCommand('opencode-zen.clearUsage', () => {

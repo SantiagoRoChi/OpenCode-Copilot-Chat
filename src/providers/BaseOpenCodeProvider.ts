@@ -436,6 +436,19 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
     return this.lastUsage;
   }
 
+  getModelFamilies(): { name: string; count: number; models: string[] }[] {
+    const families = new Map<string, string[]>();
+    for (const m of this.models) {
+      const info = this.modelInfoMap.get(m.id);
+      const family = info?.family ?? 'other';
+      if (!families.has(family)) families.set(family, []);
+      families.get(family)!.push(m.id);
+    }
+    return Array.from(families.entries())
+      .map(([name, models]) => ({ name, count: models.length, models }))
+      .sort((a, b) => b.count - a.count);
+  }
+
   private convertAllMessages(messages: readonly vscode.LanguageModelChatMessage[]): ChatMessage[] {
     const result: ChatMessage[] = [];
     for (const msg of messages) {

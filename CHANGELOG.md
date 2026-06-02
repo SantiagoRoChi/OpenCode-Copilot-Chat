@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.3] - 2026-06-02
+
+### Fixed
+- **`/usage` endpoint returns 404** — confirmed locally: `GET /zen/v1/usage` → 404, `/zen/go/v1/usage` → 404. Global tree now gracefully handles missing endpoint and falls back to showing model families instead of hanging
+- **Global tree now shows model families**: when usage API is unavailable, the Global tree still displays available models grouped by family (minimax, kimi, glm, deepseek, qwen, mimo, hy3) with model counts — making the view useful even without billing data
+- `getModelFamilies()` added to `BaseOpenCodeProvider` to expose model group info
+- `refreshGlobal` command now refreshes models + re-fetches global data instead of a separate refresh method
+
 ## [2.3.2] - 2026-06-02
 
 ### Changed

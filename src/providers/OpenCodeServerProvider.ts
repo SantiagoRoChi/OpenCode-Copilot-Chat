@@ -312,15 +312,19 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
       const sessionId = sessionData.id;
       this.outputChannel.appendLine(`[${entry.serverName}] Session: ${sessionId}`);
 
-      // Send message using session API — model must be { providerID, modelID } object
+      // Send message using session API — model must have providerID and modelID
       const messageUrl = `${entry.baseUrl}/session/${sessionId}/message`;
       const textParts = truncatedMessages.map(m => ({
         type: 'text',
         text: typeof m.content === 'string' ? m.content : m.content.map((c: any) => c.text || '').join(''),
       })).filter((p: any) => p.text);
 
+      // modelInfoMap stores family as provider name, need providerID from server data
+      const serverModelId = model.id.split(':')[1] || model.id;
+      const providerID = info.family;
+
       const requestBody: any = {
-        model: { modelID: modelId },
+        model: { providerID, modelID: serverModelId },
         parts: textParts,
       };
 

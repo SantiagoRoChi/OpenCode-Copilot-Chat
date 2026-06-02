@@ -20,6 +20,18 @@ export interface ApiUsageResponse {
   used?: number;
   remaining?: number;
   reset_at?: string;
+  quotas?: ApiQuota[];
+}
+
+export interface ApiQuota {
+  id: string;
+  name: string;
+  unit: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  reset_at?: string;
+  period?: 'hour' | 'day' | 'week' | 'month' | 'year';
 }
 
 export interface ChatMessage {

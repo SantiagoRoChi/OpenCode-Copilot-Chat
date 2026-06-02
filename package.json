@@ -2,7 +2,7 @@
   "name": "opencode-zen-copilot",
   "displayName": "OpenCode Zen for Copilot",
   "description": "Access OpenCode Zen models in GitHub Copilot Chat — free models included",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -125,6 +125,21 @@
         "command": "opencode-zen.clearUsage",
         "title": "Clear Usage Stats",
         "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.showGlobal",
+        "title": "Show Global Usage",
+        "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.showConfig",
+        "title": "Show Configuration",
+        "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.refreshGlobal",
+        "title": "Refresh Global Usage",
+        "category": "OpenCode Zen"
       }
     ],
     "viewsContainers": {
@@ -139,9 +154,19 @@
     "views": {
       "opencode-zen-sidebar": [
         {
-          "id": "opencode-zen-usage-tree",
+          "id": "opencode-zen-session-tree",
           "type": "tree",
-          "name": "Usage"
+          "name": "Session"
+        },
+        {
+          "id": "opencode-zen-global-tree",
+          "type": "tree",
+          "name": "Global"
+        },
+        {
+          "id": "opencode-zen-config-tree",
+          "type": "tree",
+          "name": "Config"
         }
       ]
     },
@@ -186,6 +211,30 @@
           "description": "Auto-detect OpenCode installation and use its API key"
         }
       }
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "view": "opencode-zen-config-tree",
+          "command": "opencode-zen.configureZen"
+        },
+        {
+          "view": "opencode-zen-config-tree",
+          "command": "opencode-zen.configureGo"
+        },
+        {
+          "view": "opencode-zen-config-tree",
+          "command": "opencode-zen.refreshAll"
+        },
+        {
+          "view": "opencode-zen-config-tree",
+          "command": "opencode-zen.clearUsage"
+        },
+        {
+          "view": "opencode-zen-global-tree",
+          "command": "opencode-zen.refreshGlobal"
+        }
+      ]
     }
   },
   "devDependencies": {

@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.0] - 2026-06-02
+
+### Added
+- **3-tree sidebar layout**: Session (local session stats), Global (API account data from server), Config (quick actions)
+- **Global tree**: fetches real account data from `/usage` endpoint — balance, used, remaining, quota limits per time period (hour/day/week/month). Shows progress bars with percentages and reset timestamps
+- **Config tree**: one-click buttons for Configure Zen Key, Configure Go Key, Refresh All Models, Clear Usage Stats — each as a native tree item with command binding
+- **ApiQuota interface**: `id`, `name`, `unit`, `limit`, `used`, `remaining`, `reset_at`, `period` for granular rate limit display
+- **Context menus**: right-click items in Config/Global trees for relevant actions
+
+### Changed
+- Session tree renamed from `UsageTreeProvider` → `SessionTreeProvider` with cleaner helper methods
+
 ## [2.2.0] - 2026-06-02
 
 ### Changed

@@ -1,57 +1,153 @@
 import * as vscode from 'vscode';
-import { ZenProvider, RequestStateEvent } from './provider';
+import { OpenCodeFreeProvider } from './providers/OpenCodeFreeProvider';
+import { OpenCodeGoProvider } from './providers/OpenCodeGoProvider';
+import { OpenCodeZenProvider } from './providers/OpenCodeZenProvider';
 import { StatusBarManager } from './status/statusBar';
-import { UsageTracker, formatUsageOutput } from './status/usageTracker';
+import { UsageTracker, UsageStats, formatUsageOutput } from './usage/UsageTracker';
 import { UsageWebviewProvider } from './status/usageWebview';
+import { OpenCodeConnector } from './integration/opencodeConnector';
+import { SecretStorage } from './config/secretStorage';
+import { ApiUsageResponse } from './client/types';
 
-let zenProvider: ZenProvider;
-let goProvider: ZenProvider;
+let freeProvider: OpenCodeFreeProvider;
+let goProvider: OpenCodeGoProvider;
+let zenProvider: OpenCodeZenProvider;
 let statusBar: StatusBarManager;
-let usageTracker: UsageTracker;
+let sharedUsageTracker: UsageTracker;
 let usageWebview: UsageWebviewProvider;
+let connector: OpenCodeConnector;
+let secretStorage: SecretStorage;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   console.log('OpenCode Zen: activating...');
 
-  // Create separate providers for Zen and Go
-  zenProvider = new ZenProvider(context, 'zen');
-  goProvider = new ZenProvider(context, 'go');
+  // Create 3 providers
+  freeProvider = new OpenCodeFreeProvider(context);
+  goProvider = new OpenCodeGoProvider(context);
+  zenProvider = new OpenCodeZenProvider(context);
 
-  await zenProvider.loadSecrets();
-  await goProvider.loadSecrets();
+  // Load API keys
+  await Promise.all([
+    freeProvider.loadApiKey(),
+    goProvider.loadApiKey(),
+    zenProvider.loadApiKey(),
+  ]);
 
-  // Register providers
-  const zenDisposable = vscode.lm.registerLanguageModelChatProvider('opencode-zen', zenProvider);
+  // Use Zen's output channel for shared logs
+  // (each provider has its own, but we share via the connector)
+  connector = new OpenCodeConnector(zenProvider['outputChannel']);
+  secretStorage = new SecretStorage(context);
+  
+  // Setup FileSystemWatcher for local OpenCode auth.json
+  connector.watchAuthFile(context);
+  context.subscriptions.push(connector);
+
+  // Check for local OpenCode installation
+  if (await connector.hasLocalKeys()) {
+    const choice = await vscode.window.showInformationMessage(
+      'OpenCode local installation detected. Use local API keys?',
+      'Yes', 'No'
+    );
+    if (choice === 'Yes') {
+      const localKeys = await connector.getLocalKeys();
+      if (localKeys.zenKey) {
+        await zenProvider.setApiKey(localKeys.zenKey);
+        await freeProvider.setApiKey(localKeys.zenKey);
+      }
+      if (localKeys.goKey) {
+        await goProvider.setApiKey(localKeys.goKey);
+      }
+      vscode.window.showInformationMessage('OpenCode Zen: Local API keys loaded.');
+    }
+  }
+
+  // Listen for changes to local auth.json
+  context.subscriptions.push(
+    connector.onDidChangeLocalKeys(async (newKeys) => {
+      const choice = await vscode.window.showInformationMessage(
+        'New API keys detected in local OpenCode installation. Use them?',
+        'Yes', 'No'
+      );
+      if (choice === 'Yes') {
+        if (newKeys.zenKey) {
+          await zenProvider.setApiKey(newKeys.zenKey);
+          await freeProvider.setApiKey(newKeys.zenKey);
+        }
+        if (newKeys.goKey) {
+          await goProvider.setApiKey(newKeys.goKey);
+        }
+        vscode.window.showInformationMessage('OpenCode Zen: New API keys loaded.');
+      }
+    })
+  );
+
+  // Register the 3 providers
+  const freeDisposable = vscode.lm.registerLanguageModelChatProvider('opencode-free', freeProvider);
   const goDisposable = vscode.lm.registerLanguageModelChatProvider('opencode-go', goProvider);
-  context.subscriptions.push(zenDisposable, goDisposable);
+  const zenDisposable = vscode.lm.registerLanguageModelChatProvider('opencode-zen', zenProvider);
+  context.subscriptions.push(freeDisposable, goDisposable, zenDisposable);
 
-  console.log('OpenCode Zen: providers registered (zen + go)');
+  console.log('OpenCode Zen: 3 providers registered (free + go + zen)');
 
-  // Initialize usage tracker
-  usageTracker = new UsageTracker();
-  context.subscriptions.push(usageTracker);
+  // Use Zen's usage tracker as the shared one
+  sharedUsageTracker = new UsageTracker();
 
-  // Initialize status bar (uses zen provider for snapshot)
+  // Status bar
   statusBar = new StatusBarManager(() => zenProvider.getStatusSnapshot());
   statusBar.show();
   context.subscriptions.push(statusBar);
 
-  // Initialize webview
+  // Usage webview
   usageWebview = new UsageWebviewProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(UsageWebviewProvider.viewType, usageWebview)
   );
 
-  // Listen to usage changes
-  context.subscriptions.push(
-    usageTracker.onDidChangeUsage((stats) => {
-      statusBar.updateUsage(stats);
-      usageWebview.updateStats(stats);
-    })
-  );
+  // Update webview with combined data from all 3 providers
+  const updateWebview = async () => {
+    const [zenKey, goKey, zenUsage, goUsage] = await Promise.all([
+      secretStorage.getZenKey(),
+      secretStorage.getGoKey(),
+      zenProvider.fetchApiUsage(),
+      goProvider.fetchApiUsage(),
+    ]);
 
-  // Live request state from both providers
-  const handleRequestState = (event: RequestStateEvent) => {
+    // Aggregate session stats from all 3 providers
+    const combined = aggregateUsageStats([
+      zenProvider.getUsageTracker().getStats(),
+      goProvider.getUsageTracker().getStats(),
+      freeProvider.getUsageTracker().getStats(),
+    ]);
+
+    usageWebview.update({
+      zenKey,
+      goKey,
+      zenUsage: zenUsage || undefined,
+      goUsage: goUsage || undefined,
+      sessionStats: combined,
+    });
+  };
+
+  // Refresh webview on any usage change
+  const onUsageChange = () => {
+    void updateWebview();
+  };
+
+  zenProvider.getUsageTracker().onDidChangeUsage(onUsageChange);
+  goProvider.getUsageTracker().onDidChangeUsage(onUsageChange);
+  freeProvider.getUsageTracker().onDidChangeUsage(onUsageChange);
+
+  // Periodic refresh of webview
+  const webviewRefreshInterval = setInterval(() => {
+    void updateWebview();
+  }, 30000);
+  context.subscriptions.push({ dispose: () => clearInterval(webviewRefreshInterval) });
+
+  // Initial webview update
+  void updateWebview();
+
+  // Live request state from all 3 providers
+  const handleRequestState = (event: any) => {
     switch (event.kind) {
       case 'start':
         statusBar.setStreaming(event.modelId, event.modelName);
@@ -61,20 +157,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         break;
       case 'error':
         statusBar.setError(event.errorMessage);
-        usageWebview.updateError(event.errorMessage);
         break;
     }
   };
 
   context.subscriptions.push(
     zenProvider.onDidChangeRequestState(handleRequestState),
-    goProvider.onDidChangeRequestState(handleRequestState)
+    goProvider.onDidChangeRequestState(handleRequestState),
+    freeProvider.onDidChangeRequestState(handleRequestState)
   );
 
-  // Refresh tooltip on snapshot changes
   context.subscriptions.push(
-    zenProvider.onDidChangeStatusSnapshot(() => statusBar.refreshTooltip()),
-    goProvider.onDidChangeStatusSnapshot(() => statusBar.refreshTooltip())
+    zenProvider.onDidChangeLanguageModelChatInformation(() => statusBar.refreshTooltip()),
+    goProvider.onDidChangeLanguageModelChatInformation(() => statusBar.refreshTooltip()),
+    freeProvider.onDidChangeLanguageModelChatInformation(() => statusBar.refreshTooltip())
   );
 
   // Commands
@@ -84,7 +180,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('opencode-zen.showUsage', () => {
-      const stats = usageTracker.getStats();
+      const stats = aggregateUsageStats([
+        zenProvider.getUsageTracker().getStats(),
+        goProvider.getUsageTracker().getStats(),
+        freeProvider.getUsageTracker().getStats(),
+      ]);
       const output = formatUsageOutput(stats);
       zenProvider.showOutput();
       zenProvider.appendOutput(output);
@@ -92,31 +192,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-zen.testConnection', async () => {
-      try {
-        const models = await zenProvider.provideLanguageModelChatInformation(
-          { silent: false },
-          new vscode.CancellationTokenSource().token
-        );
-        if (models.length > 0) {
-          statusBar.setIdle(models.length);
-          vscode.window.showInformationMessage(
-            `OpenCode Zen: Connected! Found ${models.length} model(s).`
-          );
-        } else {
-          statusBar.setNoModels();
-          vscode.window.showWarningMessage('OpenCode Zen: Connected but no models found.');
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        statusBar.setError(msg);
-        vscode.window.showErrorMessage(`OpenCode Zen: Connection failed. ${msg}`);
-      }
+    vscode.commands.registerCommand('opencode-zen.clearUsage', () => {
+      zenProvider.getUsageTracker().clear();
+      goProvider.getUsageTracker().clear();
+      freeProvider.getUsageTracker().clear();
+      vscode.window.showInformationMessage('OpenCode Zen: Usage stats cleared.');
+      void updateWebview();
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-zen.manage', async () => {
+    vscode.commands.registerCommand('opencode-zen.configureZen', async () => {
       const apiKey = await vscode.window.showInputBox({
         title: 'OpenCode Zen — API Key',
         prompt: 'Enter your OpenCode Zen/Go API key. Get one at opencode.ai/auth',
@@ -124,36 +210,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         placeHolder: 'oc-...',
         ignoreFocusOut: true,
       });
-
       if (apiKey === undefined) return;
-
       await zenProvider.setApiKey(apiKey);
-      await goProvider.setApiKey(apiKey);
-
+      await freeProvider.setApiKey(apiKey);
+      await secretStorage.setZenKey(apiKey);
       if (apiKey) {
         vscode.window.showInformationMessage('OpenCode Zen: API key saved.');
       } else {
         vscode.window.showInformationMessage('OpenCode Zen: API key cleared.');
       }
-
-      await refreshStatusBar();
+      void updateWebview();
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-zen.refreshModels', async () => {
-      zenProvider.invalidateModelCache();
-      goProvider.invalidateModelCache();
+    vscode.commands.registerCommand('opencode-zen.configureGo', async () => {
+      const apiKey = await vscode.window.showInputBox({
+        title: 'OpenCode Go — API Key',
+        prompt: 'Enter your OpenCode Go API key. Get one at opencode.ai/auth',
+        password: true,
+        placeHolder: 'oc-...',
+        ignoreFocusOut: true,
+      });
+      if (apiKey === undefined) return;
+      await goProvider.setApiKey(apiKey);
+      await secretStorage.setGoKey(apiKey);
+      if (apiKey) {
+        vscode.window.showInformationMessage('OpenCode Go: API key saved.');
+      } else {
+        vscode.window.showInformationMessage('OpenCode Go: API key cleared.');
+      }
+      void updateWebview();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('opencode-zen.refreshAll', () => {
       zenProvider.refreshModels();
       goProvider.refreshModels();
-      await refreshStatusBar();
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-zen.clearUsage', () => {
-      usageTracker.clear();
-      vscode.window.showInformationMessage('OpenCode Zen: Usage stats cleared.');
+      freeProvider.refreshModels();
+      vscode.window.showInformationMessage('OpenCode Zen: All models refreshed.');
     })
   );
 
@@ -162,6 +258,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void refreshStatusBar();
   }, 2000);
   context.subscriptions.push({ dispose: () => clearTimeout(initialProbe) });
+}
+
+function aggregateUsageStats(statsList: UsageStats[]): UsageStats {
+  const totalRequests = statsList.reduce((s, x) => s + x.totalRequests, 0);
+  const totalTokens = statsList.reduce(
+    (acc, s) => ({
+      prompt: acc.prompt + s.totalTokens.prompt,
+      completion: acc.completion + s.totalTokens.completion,
+      total: acc.total + s.totalTokens.total,
+    }),
+    { prompt: 0, completion: 0, total: 0 }
+  );
+
+  const byModel = new Map<string, { requests: number; tokens: { prompt: number; completion: number; total: number } }>();
+  const byProvider = new Map<string, { requests: number; tokens: { prompt: number; completion: number; total: number } }>();
+  const history: any[] = [];
+
+  for (const s of statsList) {
+    for (const r of s.history) history.push(r);
+    for (const [k, v] of s.byModel) {
+      const existing = byModel.get(k) || { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
+      existing.requests += v.requests;
+      existing.tokens.prompt += v.tokens.prompt;
+      existing.tokens.completion += v.tokens.completion;
+      existing.tokens.total += v.tokens.total;
+      byModel.set(k, existing);
+    }
+    for (const [k, v] of s.byProvider) {
+      const existing = byProvider.get(k) || { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
+      existing.requests += v.requests;
+      existing.tokens.prompt += v.tokens.prompt;
+      existing.tokens.completion += v.tokens.completion;
+      existing.tokens.total += v.tokens.total;
+      byProvider.set(k, existing);
+    }
+  }
+
+  history.sort((a, b) => b.timestamp - a.timestamp);
+
+  return { totalRequests, totalTokens, byModel, byProvider, history };
 }
 
 async function refreshStatusBar(): Promise<void> {

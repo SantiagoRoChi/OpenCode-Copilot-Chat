@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { StatusSnapshot } from '../client/types';
-import { UsageStats } from './usageTracker';
+import { UsageStats } from '../usage/UsageTracker';
 
 type StatusBarState =
   | { kind: 'probing' }

@@ -1,20 +1,15 @@
-import * as os from 'os';
+import * as vscode from 'vscode';
 import * as path from 'path';
 import { OpenCodeHealthResponse } from '../client/types';
-import { readZenApiKey, readOpenCodeConfig, isZenKeyValid } from './authReader';
-
-let fsModule: typeof import('fs') | undefined;
-try {
-  fsModule = require('fs') as typeof import('fs');
-} catch {
-  // fs not available
-}
+import { readLocalKeys, LocalKeys, getAuthPath } from './authReader';
 
 interface OpenCodeDetection {
   installed: boolean;
   authExists: boolean;
   zenKeyAvailable: boolean;
+  goKeyAvailable: boolean;
   zenKeyValid: boolean;
+  goKeyValid: boolean;
   serverRunning: boolean;
   serverPort?: number;
   configExists: boolean;
@@ -22,55 +17,110 @@ interface OpenCodeDetection {
 
 export class OpenCodeConnector {
   private detection?: OpenCodeDetection;
-  private outputChannel: { appendLine(msg: string): void };
+  private authWatcher?: vscode.FileSystemWatcher;
+  private readonly _onDidChangeLocalKeys = new vscode.EventEmitter<LocalKeys>();
+  readonly onDidChangeLocalKeys = this._onDidChangeLocalKeys.event;
 
-  constructor(outputChannel: { appendLine(msg: string): void }) {
-    this.outputChannel = outputChannel;
-  }
+  constructor(private readonly outputChannel: vscode.OutputChannel) {}
 
   async detect(): Promise<OpenCodeDetection> {
-    if (this.detection) {
-      return this.detection;
-    }
+    if (this.detection) return this.detection;
 
     this.outputChannel.appendLine('Detecting OpenCode installation...');
 
-    const authExists = !!(await readAuthJson());
-    const zenApiKey = authExists ? await readZenApiKey() : null;
-    const zenKeyValid = zenApiKey ? await isZenKeyValid(zenApiKey) : false;
-    const configExists = !!(await readOpenCodeConfig());
+    const localKeys = await readLocalKeys();
     const { running: serverRunning, port: serverPort } = await this.detectServer();
 
+    let zenKeyValid = false;
+    let goKeyValid = false;
+    if (localKeys.zenKey) {
+      try {
+        const r = await fetch('https://opencode.ai/zen/v1/models', {
+          headers: { 'Authorization': `Bearer ${localKeys.zenKey}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        zenKeyValid = r.ok;
+      } catch { /* ignore */ }
+    }
+    if (localKeys.goKey) {
+      try {
+        const r = await fetch('https://opencode.ai/zen/go/v1/models', {
+          headers: { 'Authorization': `Bearer ${localKeys.goKey}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        goKeyValid = r.ok;
+      } catch { /* ignore */ }
+    }
+
+    const authPath = getAuthPath();
+    const fs = require('fs') as typeof import('fs');
+    const authExists = fs.existsSync(authPath);
+
     this.detection = {
-      installed: authExists || configExists,
+      installed: authExists,
       authExists,
-      zenKeyAvailable: !!zenApiKey,
+      zenKeyAvailable: !!localKeys.zenKey,
+      goKeyAvailable: !!localKeys.goKey,
       zenKeyValid,
+      goKeyValid,
       serverRunning,
       serverPort,
-      configExists,
+      configExists: false,
     };
 
     this.outputChannel.appendLine(
       `OpenCode detection: installed=${this.detection.installed}, ` +
-      `auth=${this.detection.authExists}, zenKey=${this.detection.zenKeyAvailable}, ` +
+      `zenKey=${this.detection.zenKeyAvailable}, goKey=${this.detection.goKeyAvailable}, ` +
       `server=${this.detection.serverRunning}`
     );
 
     return this.detection;
   }
 
-  async getZenApiKey(): Promise<string | null> {
-    return readZenApiKey();
+  async getLocalKeys(): Promise<LocalKeys> {
+    return readLocalKeys();
   }
 
-  async invalidate(): Promise<void> {
+  async hasLocalKeys(): Promise<boolean> {
+    const keys = await readLocalKeys();
+    return !!(keys.zenKey || keys.goKey);
+  }
+
+  watchAuthFile(context: vscode.ExtensionContext): void {
+    if (this.authWatcher) return;
+    const authPath = getAuthPath();
+    const pattern = new vscode.RelativePattern(
+      vscode.Uri.file(path.dirname(authPath)),
+      path.basename(authPath)
+    );
+    this.authWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+    this.authWatcher.onDidChange(async () => {
+      this.outputChannel.appendLine('auth.json changed');
+      const newKeys = await readLocalKeys();
+      this._onDidChangeLocalKeys.fire(newKeys);
+    });
+    this.authWatcher.onDidCreate(async () => {
+      this.outputChannel.appendLine('auth.json created');
+      const newKeys = await readLocalKeys();
+      this._onDidChangeLocalKeys.fire(newKeys);
+    });
+    this.authWatcher.onDidDelete(() => {
+      this.outputChannel.appendLine('auth.json deleted');
+    });
+    context.subscriptions.push(this.authWatcher);
+  }
+
+  invalidate(): void {
     this.detection = undefined;
+  }
+
+  dispose(): void {
+    this.authWatcher?.dispose();
+    this._onDidChangeLocalKeys.dispose();
   }
 
   private async detectServer(): Promise<{ running: boolean; port?: number }> {
     const ports = [4096, 4097, 4098];
-
     for (const port of ports) {
       try {
         const response = await fetch(`http://127.0.0.1:${port}/global/health`, {
@@ -78,41 +128,12 @@ export class OpenCodeConnector {
         });
         if (response.ok) {
           const data = await response.json() as OpenCodeHealthResponse;
-          if (data.healthy) {
-            return { running: true, port };
-          }
+          if (data.healthy) return { running: true, port };
         }
       } catch {
         // Not running on this port
       }
     }
-
     return { running: false };
-  }
-}
-
-async function readAuthJson(): Promise<Record<string, unknown> | null> {
-  if (!fsModule) return null;
-  const home = os.homedir();
-  let authPath: string;
-
-  switch (process.platform) {
-    case 'win32':
-      authPath = path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'opencode', 'auth.json');
-      break;
-    case 'darwin':
-      authPath = path.join(home, '.local', 'share', 'opencode', 'auth.json');
-      break;
-    default:
-      authPath = path.join(home, '.local', 'share', 'opencode', 'auth.json');
-  }
-
-  try {
-    const exists = fsModule.existsSync(authPath);
-    if (!exists) return null;
-    const content = fsModule.readFileSync(authPath, 'utf-8');
-    return JSON.parse(content);
-  } catch {
-    return null;
   }
 }

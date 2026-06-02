@@ -2,7 +2,7 @@
   "name": "opencode-zen-copilot",
   "displayName": "OpenCode Zen for Copilot",
   "description": "Access OpenCode Zen models in GitHub Copilot Chat — free models included",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -48,15 +48,15 @@
   "contributes": {
     "languageModelChatProviders": [
       {
-        "vendor": "opencode-zen",
-        "displayName": "OpenCode Zen",
+        "vendor": "opencode-free",
+        "displayName": "OpenCode Free",
         "configuration": {
           "properties": {
             "apiKey": {
               "type": "string",
               "secret": true,
-              "title": "OpenCode Zen API Key",
-              "description": "API key from opencode.ai/auth. Auto-detected from OpenCode if installed."
+              "title": "OpenCode API Key",
+              "description": "Uses Zen API key. Get one at opencode.ai/auth."
             }
           }
         }
@@ -74,22 +74,36 @@
             }
           }
         }
+      },
+      {
+        "vendor": "opencode-zen",
+        "displayName": "OpenCode Zen",
+        "configuration": {
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "secret": true,
+              "title": "OpenCode Zen API Key",
+              "description": "API key from opencode.ai/auth. Auto-detected from OpenCode if installed."
+            }
+          }
+        }
       }
     ],
     "commands": [
       {
-        "command": "opencode-zen.manage",
-        "title": "Configure OpenCode Zen",
+        "command": "opencode-zen.configureZen",
+        "title": "Configure Zen Key",
         "category": "OpenCode Zen"
       },
       {
-        "command": "opencode-zen.testConnection",
-        "title": "Test Connection",
+        "command": "opencode-zen.configureGo",
+        "title": "Configure Go Key",
         "category": "OpenCode Zen"
       },
       {
-        "command": "opencode-zen.refreshModels",
-        "title": "Refresh Models",
+        "command": "opencode-zen.refreshAll",
+        "title": "Refresh All Models",
         "category": "OpenCode Zen"
       },
       {

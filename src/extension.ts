@@ -7,7 +7,7 @@ import { UsageTracker, UsageStats, formatUsageOutput } from './usage/UsageTracke
 import { UsageWebviewProvider } from './status/usageWebview';
 import { OpenCodeConnector } from './integration/opencodeConnector';
 import { SecretStorage } from './config/secretStorage';
-import { ApiUsageResponse } from './client/types';
+import { ApiUsageResponse, TokenUsage } from './client/types';
 
 let freeProvider: OpenCodeFreeProvider;
 let goProvider: OpenCodeGoProvider;
@@ -270,35 +270,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 function aggregateUsageStats(statsList: UsageStats[]): UsageStats {
   const totalRequests = statsList.reduce((s, x) => s + x.totalRequests, 0);
   const totalTokens = statsList.reduce(
-    (acc, s) => ({
-      prompt: acc.prompt + s.totalTokens.prompt,
-      completion: acc.completion + s.totalTokens.completion,
-      total: acc.total + s.totalTokens.total,
+    (acc, st) => ({
+      prompt: acc.prompt + st.totalTokens.prompt,
+      completion: acc.completion + st.totalTokens.completion,
+      total: acc.total + st.totalTokens.total,
     }),
     { prompt: 0, completion: 0, total: 0 }
   );
 
-  const byModel = new Map<string, { requests: number; tokens: { prompt: number; completion: number; total: number } }>();
-  const byProvider = new Map<string, { requests: number; tokens: { prompt: number; completion: number; total: number } }>();
+  const byModel: Record<string, { requests: number; tokens: TokenUsage }> = {};
+  const byProvider: Record<string, { requests: number; tokens: TokenUsage }> = {};
   const history: any[] = [];
 
   for (const s of statsList) {
     for (const r of s.history) history.push(r);
-    for (const [k, v] of s.byModel) {
-      const existing = byModel.get(k) || { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
-      existing.requests += v.requests;
-      existing.tokens.prompt += v.tokens.prompt;
-      existing.tokens.completion += v.tokens.completion;
-      existing.tokens.total += v.tokens.total;
-      byModel.set(k, existing);
+    for (const [k, v] of Object.entries(s.byModel)) {
+      if (!byModel[k]) byModel[k] = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
+      byModel[k].requests += v.requests;
+      byModel[k].tokens.prompt += v.tokens.prompt;
+      byModel[k].tokens.completion += v.tokens.completion;
+      byModel[k].tokens.total += v.tokens.total;
     }
-    for (const [k, v] of s.byProvider) {
-      const existing = byProvider.get(k) || { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
-      existing.requests += v.requests;
-      existing.tokens.prompt += v.tokens.prompt;
-      existing.tokens.completion += v.tokens.completion;
-      existing.tokens.total += v.tokens.total;
-      byProvider.set(k, existing);
+    for (const [k, v] of Object.entries(s.byProvider)) {
+      if (!byProvider[k]) byProvider[k] = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
+      byProvider[k].requests += v.requests;
+      byProvider[k].tokens.prompt += v.tokens.prompt;
+      byProvider[k].tokens.completion += v.tokens.completion;
+      byProvider[k].tokens.total += v.tokens.total;
     }
   }
 

@@ -502,12 +502,22 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
     reasonerSteps: ReasonerStep[],
     onUsage?: (usage: TokenUsage) => void
   ): StreamReporter {
+    const reasonerOutputs: string[] = [];
     return {
       requestId,
       sessionId,
       reportText: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
-      reportThinking: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
+      reportThinking: (text) => {
+        reasonerOutputs.push(text);
+      },
       reportThinkingDone: () => { /* no-op */ },
+      reportThinkingBlock: (text) => {
+        if (reasonerOutputs.length > 0) {
+          const full = reasonerOutputs.join('');
+          reasonerOutputs.length = 0;
+          progress.report(new vscode.LanguageModelTextPart(`\n[reasoning]${full}[/reasoning]\n`));
+        }
+      },
       reportToolCall: (id, name, args) =>
         progress.report(new vscode.LanguageModelToolCallPart(id, name, args)),
       reportUsage: (usage) => {

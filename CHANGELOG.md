@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1] - 2026-06-02
+
+### Fixed
+- **Usage stats blank**: `byModel` and `byProvider` changed from `Map` to plain `Record<string, ...>` so they serialize properly over webview postMessage (Maps were invisible to JSON.stringify)
+- **Thinking rendering**: thinking content is now buffered and emitted as a single block with `[reasoning]...[/reasoning]` markers when reasoning ends, preventing interleaved text output
+- **Webview sessions**: new "Sessions" section groups requests by sessionId with nested request details
+
 ## [2.1.0] - 2026-06-02
 
 ### Changed

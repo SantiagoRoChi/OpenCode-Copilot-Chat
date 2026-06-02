@@ -357,10 +357,10 @@ export class UsageWebviewProvider implements vscode.WebviewViewProvider {
       }
 
       function renderProviders(s) {
-        if (!s.byProvider || s.byProvider.size === 0) {
+        if (!s.byProvider || Object.keys(s.byProvider).length === 0) {
           return '<div class="row-meta" style="padding:6px 8px">No provider usage yet</div>';
         }
-        const entries = Array.from(s.byProvider.entries())
+        const entries = Object.entries(s.byProvider)
           .map(([id, data]) => ({ id, data }))
           .sort((a, b) => b.data.tokens.total - a.data.tokens.total);
         return entries.map(p =>
@@ -372,11 +372,11 @@ export class UsageWebviewProvider implements vscode.WebviewViewProvider {
       }
 
       function renderModels(s) {
-        if (!s.byModel || s.byModel.size === 0) {
+        if (!s.byModel || Object.keys(s.byModel).length === 0) {
           return '<div class="row-meta" style="padding:6px 8px">No model usage yet</div>';
         }
         const total = s.totalTokens.total;
-        const entries = Array.from(s.byModel.entries())
+        const entries = Object.entries(s.byModel)
           .map(([id, data]) => ({ id, data }))
           .sort((a, b) => b.data.tokens.total - a.data.tokens.total)
           .slice(0, 15);
@@ -399,21 +399,64 @@ export class UsageWebviewProvider implements vscode.WebviewViewProvider {
         }).join('');
       }
 
+      function renderSessions(s) {
+        if (!s.history || s.history.length === 0) {
+          return '<div class="row-meta" style="padding:6px 8px">No sessions yet</div>';
+        }
+        const sessionMap = {};
+        for (const r of s.history) {
+          if (!sessionMap[r.sessionId]) {
+            sessionMap[r.sessionId] = { count: 0, tokens: 0, firstTs: r.timestamp };
+          }
+          sessionMap[r.sessionId].count++;
+          sessionMap[r.sessionId].tokens += r.usage.total;
+        }
+        const entries = Object.entries(sessionMap)
+          .map(([sid, data]) => ({ sid, ...data }))
+          .sort((a, b) => b.tokens - a.tokens)
+          .slice(0, 10);
+        return entries.map(e => {
+          const expanded = treeState['session_' + e.sid];
+          return '<div class="tree-item" data-tree="session_' + e.sid + '">'
+            + '<span class="tree-toggle">' + (expanded ? '▼' : '▶') + '</span>'
+            + '<span class="tree-label">Session ' + e.sid.slice(0, 8) + '…</span>'
+            + '<span class="tree-detail">' + e.count + ' req · ' + formatNum(e.tokens) + '</span>'
+            + '</div>'
+            + '<div class="tree-children' + (expanded ? '' : ' collapsed') + '" data-children="session_' + e.sid + '">'
+            + s.history.filter(r => r.sessionId === e.sid).reverse().map(r => {
+              const reqExpanded = treeState['req_' + r.requestId];
+              return '<div class="tree-item" data-tree="req_' + r.requestId + '" style="padding-left:8px">'
+                + '<span class="tree-toggle">' + (reqExpanded ? '▼' : '▶') + '</span>'
+                + '<span class="tree-label">' + new Date(r.timestamp).toLocaleTimeString() + '</span>'
+                + '<span class="tree-detail">' + formatNum(r.usage.total) + '</span>'
+                + '</div>'
+                + '<div class="tree-children' + (reqExpanded ? '' : ' collapsed') + '" data-children="req_' + r.requestId + '" style="padding-left:16px">'
+                + '<div class="row"><span class="row-name">Model</span><span class="row-meta">' + r.modelId + '</span></div>'
+                + '<div class="row"><span class="row-name">Provider</span><span class="row-meta">' + providerName(r.provider) + '</span></div>'
+                + '<div class="row"><span class="row-name">Prompt</span><span class="row-meta">' + formatNum(r.usage.prompt) + '</span></div>'
+                + '<div class="row"><span class="row-name">Completion</span><span class="row-meta">' + formatNum(r.usage.completion) + '</span></div>'
+                + '</div>';
+            }).join('')
+            + '</div>';
+        }).join('');
+      }
+
       function renderRecent(s) {
         if (!s.history || s.history.length === 0) {
           return '<div class="row-meta" style="padding:6px 8px">No recent requests</div>';
         }
         const recent = s.history.slice(-20).reverse();
         return recent.map(r => {
-          const expanded = treeState['recent_' + r.timestamp];
-          return '<div class="tree-item" data-tree="recent_' + r.timestamp + '">'
+          const expanded = treeState['recent_' + r.requestId];
+          return '<div class="tree-item" data-tree="recent_' + r.requestId + '">'
             + '<span class="tree-toggle">' + (expanded ? '▼' : '▶') + '</span>'
             + '<span class="tree-label">' + new Date(r.timestamp).toLocaleTimeString() + ' · ' + r.modelName + '</span>'
             + '<span class="tree-detail">' + formatNum(r.usage.total) + '</span>'
             + '</div>'
-            + '<div class="tree-children' + (expanded ? '' : ' collapsed') + '" data-children="recent_' + r.timestamp + '">'
+            + '<div class="tree-children' + (expanded ? '' : ' collapsed') + '" data-children="recent_' + r.requestId + '">'
             + '<div class="row"><span class="row-name">Provider</span><span class="row-meta">' + providerName(r.provider) + '</span></div>'
-            + '<div class="row"><span class="row-name">Model</span><span class="row-meta">' + r.modelId + '</span></div>'
+            + '<div class="row"><span class="row-name">Session</span><span class="row-meta">' + r.sessionId.slice(0, 8) + '…</span></div>'
+            + '<div class="row"><span class="row-name">Request</span><span class="row-meta">' + r.requestId.slice(0, 8) + '…</span></div>'
             + '<div class="row"><span class="row-name">Prompt</span><span class="row-meta">' + formatNum(r.usage.prompt) + '</span></div>'
             + '<div class="row"><span class="row-name">Completion</span><span class="row-meta">' + formatNum(r.usage.completion) + '</span></div>'
             + '<div class="row"><span class="row-name">Total</span><span class="row-meta">' + formatNum(r.usage.total) + '</span></div>'
@@ -428,6 +471,7 @@ export class UsageWebviewProvider implements vscode.WebviewViewProvider {
         h += makeSection('keys', '🔑', 'API Keys', renderKeys(d));
         h += makeSection('balance', '💰', 'Account Balance', renderBalance(d));
         h += makeSection('session', '📈', 'Session Statistics', renderSession(s));
+        h += makeSection('sessions', '🔀', 'Sessions', renderSessions(s));
         h += makeSection('providers', '📊', 'By Provider', renderProviders(s));
         h += makeSection('models', '🤖', 'By Model', renderModels(s));
         h += makeSection('recent', '📝', 'Recent Requests (' + (s.history?.length || 0) + ')', renderRecent(s));

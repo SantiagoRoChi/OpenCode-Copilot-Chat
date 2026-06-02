@@ -79,8 +79,8 @@ function renderTooltip(snapshot: StatusSnapshot, usageStats?: UsageStats): strin
   if (usageStats && usageStats.totalRequests > 0) {
     lines.push('**Usage**');
     lines.push(`${usageStats.totalRequests} requests · ${usageStats.totalTokens.total.toLocaleString()} tokens`);
-    if (usageStats.byProvider.size > 0) {
-      for (const [provider, data] of usageStats.byProvider) {
+    if (Object.keys(usageStats.byProvider).length > 0) {
+      for (const [provider, data] of Object.entries(usageStats.byProvider)) {
         const name = provider === 'opencode-go' ? 'Go' : 'Zen';
         lines.push(`  ${name}: ${data.requests} req`);
       }

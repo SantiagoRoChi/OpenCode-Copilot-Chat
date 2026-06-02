@@ -10,6 +10,7 @@ export interface StreamReporter {
   reportToolCall(id: string, name: string, args: Record<string, unknown>): void;
   reportUsage(usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }): void;
   reportReasonerStep(stepId: string, label: string, tokens?: number): void;
+  reportThinkingBlock(text: string): void;
 }
 
 export interface StreamResult {
@@ -67,6 +68,7 @@ export async function streamResponse(options: StreamOptions): Promise<StreamResu
             reasonerStepCount++;
             const stepId = `reasoner-${reporter.requestId}-${reasonerStepCount}`;
             reporter.reportReasonerStep(stepId, `Reasoning #${reasonerStepCount}`);
+            reporter.reportThinkingBlock('');
           }
           reporter.reportThinking(delta.reasoning_content);
         } else if (isReasoning) {

@@ -16,8 +16,8 @@ export interface UsageRecord {
 export interface UsageStats {
   totalRequests: number;
   totalTokens: TokenUsage;
-  byModel: Map<string, { requests: number; tokens: TokenUsage }>;
-  byProvider: Map<string, { requests: number; tokens: TokenUsage }>;
+  byModel: Record<string, { requests: number; tokens: TokenUsage }>;
+  byProvider: Record<string, { requests: number; tokens: TokenUsage }>;
   history: UsageRecord[];
 }
 
@@ -67,27 +67,29 @@ export class UsageTracker {
 
   getStats(): UsageStats {
     const totalTokens: TokenUsage = { prompt: 0, completion: 0, total: 0 };
-    const byModel = new Map<string, { requests: number; tokens: TokenUsage }>();
-    const byProvider = new Map<string, { requests: number; tokens: TokenUsage }>();
+    const byModel: Record<string, { requests: number; tokens: TokenUsage }> = {};
+    const byProvider: Record<string, { requests: number; tokens: TokenUsage }> = {};
 
     for (const record of this.records) {
       totalTokens.prompt += record.usage.prompt;
       totalTokens.completion += record.usage.completion;
       totalTokens.total += record.usage.total;
 
-      const modelStats = byModel.get(record.modelId) || { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
-      modelStats.requests++;
-      modelStats.tokens.prompt += record.usage.prompt;
-      modelStats.tokens.completion += record.usage.completion;
-      modelStats.tokens.total += record.usage.total;
-      byModel.set(record.modelId, modelStats);
+      if (!byModel[record.modelId]) {
+        byModel[record.modelId] = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
+      }
+      byModel[record.modelId].requests++;
+      byModel[record.modelId].tokens.prompt += record.usage.prompt;
+      byModel[record.modelId].tokens.completion += record.usage.completion;
+      byModel[record.modelId].tokens.total += record.usage.total;
 
-      const providerStats = byProvider.get(record.provider) || { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
-      providerStats.requests++;
-      providerStats.tokens.prompt += record.usage.prompt;
-      providerStats.tokens.completion += record.usage.completion;
-      providerStats.tokens.total += record.usage.total;
-      byProvider.set(record.provider, providerStats);
+      if (!byProvider[record.provider]) {
+        byProvider[record.provider] = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
+      }
+      byProvider[record.provider].requests++;
+      byProvider[record.provider].tokens.prompt += record.usage.prompt;
+      byProvider[record.provider].tokens.completion += record.usage.completion;
+      byProvider[record.provider].tokens.total += record.usage.total;
     }
 
     return {
@@ -97,22 +99,6 @@ export class UsageTracker {
       byProvider,
       history: [...this.records],
     };
-  }
-
-  getSessions(): { sessionId: string; records: UsageRecord[]; tokens: TokenUsage }[] {
-    const map = new Map<string, { sessionId: string; records: UsageRecord[]; tokens: TokenUsage }>();
-    for (const record of this.records) {
-      let session = map.get(record.sessionId);
-      if (!session) {
-        session = { sessionId: record.sessionId, records: [], tokens: { prompt: 0, completion: 0, total: 0 } };
-        map.set(record.sessionId, session);
-      }
-      session.records.push(record);
-      session.tokens.prompt += record.usage.prompt;
-      session.tokens.completion += record.usage.completion;
-      session.tokens.total += record.usage.total;
-    }
-    return Array.from(map.values()).sort((a, b) => b.records[0].timestamp - a.records[0].timestamp);
   }
 
   clear(): void {
@@ -140,10 +126,10 @@ export function formatUsageOutput(stats: UsageStats): string {
   lines.push(`    └─ Completion: ${stats.totalTokens.completion.toLocaleString()}`);
   lines.push('');
 
-  if (stats.byProvider.size > 0) {
+  if (Object.keys(stats.byProvider).length > 0) {
     lines.push('🏢 BY PROVIDER');
     lines.push('─────────────────────────────────────────────────────────────');
-    for (const [provider, data] of stats.byProvider) {
+    for (const [provider, data] of Object.entries(stats.byProvider)) {
       const name = provider === 'opencode-go' ? 'OpenCode Go' : 'OpenCode Zen';
       lines.push(`  ${name}:`);
       lines.push(`    Requests: ${data.requests} | Tokens: ${data.tokens.total.toLocaleString()}`);
@@ -154,37 +140,36 @@ export function formatUsageOutput(stats: UsageStats): string {
   if (stats.history.length > 0) {
     lines.push('🔀 BY SESSION');
     lines.push('─────────────────────────────────────────────────────────────');
-    const sessionMap = new Map<string, { sid: string; count: number; tokens: TokenUsage }>();
+    const sessionMap: Record<string, { sid: string; count: number; tokens: TokenUsage }> = {};
     for (const record of stats.history) {
-      let s = sessionMap.get(record.sessionId);
-      if (!s) {
-        s = { sid: record.sessionId, count: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
-        sessionMap.set(record.sessionId, s);
+      if (!sessionMap[record.sessionId]) {
+        sessionMap[record.sessionId] = { sid: record.sessionId, count: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
       }
-      s.count++;
-      s.tokens.prompt += record.usage.prompt;
-      s.tokens.completion += record.usage.completion;
-      s.tokens.total += record.usage.total;
+      sessionMap[record.sessionId].count++;
+      sessionMap[record.sessionId].tokens.prompt += record.usage.prompt;
+      sessionMap[record.sessionId].tokens.completion += record.usage.completion;
+      sessionMap[record.sessionId].tokens.total += record.usage.total;
     }
-    const sorted = Array.from(sessionMap.values()).sort((a, b) => b.tokens.total - a.tokens.total);
+    const sorted = Object.values(sessionMap).sort((a, b) => b.tokens.total - a.tokens.total);
     for (const s of sorted) {
       lines.push(`  Session ${s.sid.slice(0, 8)}…: ${s.count} req · ${s.tokens.total.toLocaleString()} tok`);
     }
     lines.push('');
   }
 
-  if (stats.byModel.size > 0) {
+  if (Object.keys(stats.byModel).length > 0) {
     lines.push('🤖 BY MODEL');
     lines.push('─────────────────────────────────────────────────────────────');
-    const sortedModels = Array.from(stats.byModel.entries())
-      .sort((a, b) => b[1].tokens.total - a[1].tokens.total);
+    const sortedModels = Object.entries(stats.byModel)
+      .map(([id, data]) => ({ id, data }))
+      .sort((a, b) => b.data.tokens.total - a.data.tokens.total);
 
-    for (const [modelId, data] of sortedModels) {
+    for (const m of sortedModels) {
       const pct = stats.totalTokens.total > 0
-        ? ((data.tokens.total / stats.totalTokens.total) * 100).toFixed(1)
+        ? ((m.data.tokens.total / stats.totalTokens.total) * 100).toFixed(1)
         : '0.0';
-      lines.push(`  ${modelId}:`);
-      lines.push(`    ${data.requests} requests | ${data.tokens.total.toLocaleString()} tokens (${pct}%)`);
+      lines.push(`  ${m.id}:`);
+      lines.push(`    ${m.data.requests} requests | ${m.data.tokens.total.toLocaleString()} tokens (${pct}%)`);
     }
     lines.push('');
   }

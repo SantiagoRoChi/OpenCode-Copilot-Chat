@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.0] - 2026-06-02
+
+### Changed
+- **Replaced WebviewView with native TreeView**: usage sidebar now uses VS Code's native `TreeDataProvider` API (like Explorer/Timeline/Outline). No custom HTML/CSS — all rendering uses VS Code's native tree components with proper labels, icons, and collapse states
+- **Sidebar sections**: API Keys, Balance, Session Summary (expandable), By Provider, By Model, Sessions (grouped by sessionId with nested requests), Recent Requests
+
 ## [2.1.1] - 2026-06-02
 
 ### Fixed

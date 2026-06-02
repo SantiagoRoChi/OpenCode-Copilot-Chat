@@ -2,7 +2,7 @@
   "name": "opencode-zen-copilot",
   "displayName": "OpenCode Zen for Copilot",
   "description": "Access OpenCode Zen models in GitHub Copilot Chat — free models included",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -130,18 +130,18 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "opencode-zen-usage",
+          "id": "opencode-zen-sidebar",
           "title": "OpenCode Zen",
           "icon": "$(check)"
         }
       ]
     },
     "views": {
-      "opencode-zen-usage": [
+      "opencode-zen-sidebar": [
         {
-          "type": "webview",
-          "id": "opencode-zen-usage-view",
-          "name": "Usage Stats"
+          "id": "opencode-zen-usage-tree",
+          "type": "tree",
+          "name": "Usage"
         }
       ]
     },

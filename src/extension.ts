@@ -4,7 +4,7 @@ import { OpenCodeGoProvider } from './providers/OpenCodeGoProvider';
 import { OpenCodeZenProvider } from './providers/OpenCodeZenProvider';
 import { StatusBarManager } from './status/statusBar';
 import { UsageTracker, UsageStats, formatUsageOutput } from './usage/UsageTracker';
-import { UsageWebviewProvider } from './status/usageWebview';
+import { UsageTreeProvider } from './status/usageTree';
 import { OpenCodeConnector } from './integration/opencodeConnector';
 import { SecretStorage } from './config/secretStorage';
 import { ApiUsageResponse, TokenUsage } from './client/types';
@@ -14,7 +14,7 @@ let goProvider: OpenCodeGoProvider;
 let zenProvider: OpenCodeZenProvider;
 let statusBar: StatusBarManager;
 let sharedUsageTracker: UsageTracker;
-let usageWebview: UsageWebviewProvider;
+let usageTree: UsageTreeProvider;
 let connector: OpenCodeConnector;
 let secretStorage: SecretStorage;
 
@@ -98,9 +98,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(statusBar);
 
   // Usage webview
-  usageWebview = new UsageWebviewProvider(context.extensionUri);
+  usageTree = new UsageTreeProvider();
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(UsageWebviewProvider.viewType, usageWebview)
+    vscode.window.registerTreeDataProvider('opencode-zen-usage-tree', usageTree)
   );
 
   // Update webview with combined data from all 3 providers
@@ -119,7 +119,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       freeProvider.getUsageTracker().getStats(),
     ]);
 
-    usageWebview.update({
+    usageTree.update({
       zenKey,
       goKey,
       zenUsage: zenUsage || undefined,
@@ -180,8 +180,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('opencode-zen.showUsage', () => {
-      // Open the usage webview in the sidebar
-      vscode.commands.executeCommand('workbench.view.opencode-zen-usage');
+      vscode.commands.executeCommand('workbench.view.opencode-zen-sidebar');
     })
   );
 
@@ -205,6 +204,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       freeProvider.getUsageTracker().clear();
       vscode.window.showInformationMessage('OpenCode Zen: Usage stats cleared.');
       void updateWebview();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('opencode-zen.refreshTree', () => {
+      usageTree.refresh();
     })
   );
 

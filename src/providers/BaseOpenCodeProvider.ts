@@ -183,6 +183,17 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
 
   protected toChatInformation(m: ApiModel, info: ModelInfo): vscode.LanguageModelChatInformation {
     const caps = getModelCapabilities(m.id);
+
+    // Build cost string for tooltip
+    let costStr = '';
+    if (caps.pricePerMillionInput != null || caps.pricePerMillionOutput != null) {
+      const parts: string[] = [];
+      if (caps.pricePerMillionInput != null) parts.push(`In: $${caps.pricePerMillionInput}/M`);
+      if (caps.pricePerMillionOutput != null) parts.push(`Out: $${caps.pricePerMillionOutput}/M`);
+      if (caps.pricePerMillionCacheRead != null) parts.push(`Cache: $${caps.pricePerMillionCacheRead}/M`);
+      costStr = '\n\nPricing (per 1M tokens):\n' + parts.join('\n');
+    }
+
     const chatInfo: vscode.LanguageModelChatInformation = {
       id: m.id,
       name: m.id,
@@ -190,7 +201,7 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
       version: m.id,
       maxInputTokens: info.maxInputTokens,
       maxOutputTokens: info.maxOutputTokens,
-      tooltip: `${info.name}\n\nContext: ${info.contextLabel}\n\nModel from ${this.displayName}`,
+      tooltip: `${info.name}\n\nContext: ${info.contextLabel}\n\nModel from ${this.displayName}${costStr}`,
       detail: `${info.contextLabel} · ${this.displayName}`,
       capabilities: {
         imageInput: caps.imageInput,

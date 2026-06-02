@@ -185,15 +185,26 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
 
             this.modelInfoMap.set(uniqueId, info);
 
+            // Build cost string
+            let costStr = '';
+            if (matchedCaps?.pricePerMillionInput != null || matchedCaps?.pricePerMillionOutput != null) {
+              const parts: string[] = [];
+              if (matchedCaps.pricePerMillionInput != null) parts.push(`In: $${matchedCaps.pricePerMillionInput}/M`);
+              if (matchedCaps.pricePerMillionOutput != null) parts.push(`Out: $${matchedCaps.pricePerMillionOutput}/M`);
+              if (matchedCaps.pricePerMillionCacheRead != null) parts.push(`Cache: $${matchedCaps.pricePerMillionCacheRead}/M`);
+              costStr = parts.join(' · ');
+            }
+
             const chatInfo: vscode.LanguageModelChatInformation = {
               id: uniqueId,
               name: `${info.name} (${entry.serverName})`,
-              description: `${provider.name} · ${info.contextLabel} in · ${Math.round(maxOutput / 1000)}K out`,
+              description: costStr || `${provider.name} · ${info.contextLabel} in · ${Math.round(maxOutput / 1000)}K out`,
               vendor: this.vendor,
               family: provider.name,
               version: modelData.version || '1',
               maxInputTokens: maxInput,
               maxOutputTokens: maxOutput,
+              tooltip: `${info.name}\n\nServer: ${entry.serverName}\nProvider: ${provider.name}\nContext: ${info.contextLabel}\nMax Output: ${Math.round(maxOutput / 1000)}K${costStr ? '\n\nPricing (per 1M tokens):\n' + costStr.replace(/ · /g, '\n') : ''}`,
               capabilities: {
                 imageInput,
                 toolCalling,

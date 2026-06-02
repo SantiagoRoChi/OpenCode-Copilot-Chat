@@ -98,11 +98,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   const updateAllTrees = async () => {
-    const [zenKey, goKey, zenUsage, goUsage] = await Promise.all([
+    const [zenKey, goKey] = await Promise.all([
       secretStorage.getZenKey(),
       secretStorage.getGoKey(),
-      zenProvider.fetchApiUsage(),
-      goProvider.fetchApiUsage(),
     ]);
 
     const combined = aggregateUsageStats([
@@ -112,12 +110,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ]);
 
     sessionTree.update({
-      zenKey, goKey, zenUsage: zenUsage || undefined, goUsage: goUsage || undefined, sessionStats: combined,
+      zenKey, goKey, sessionStats: combined,
     });
 
-    globalTree.update({ zenKey, goKey, zenUsage: zenUsage || undefined, goUsage: goUsage || undefined });
-
     configTree.update(zenKey, goKey);
+
+    let zenStatus: 'pending' | 'error' | 'ok' = 'pending';
+    let goStatus: 'pending' | 'error' | 'ok' = 'pending';
+    let zenUsage: any;
+    let goUsage: any;
+
+    try {
+      const zu = await zenProvider.fetchApiUsage().catch(() => undefined);
+      const gu = await goProvider.fetchApiUsage().catch(() => undefined);
+      zenUsage = zu;
+      goUsage = gu;
+      zenStatus = 'ok';
+      goStatus = 'ok';
+    } catch {
+      zenStatus = 'error';
+      goStatus = 'error';
+    }
+
+    globalTree.update({ zenKey, goKey, zenStatus, goStatus, zenUsage: zenUsage || undefined, goUsage: goUsage || undefined });
   };
 
   const onUsageChange = () => { void updateAllTrees(); };

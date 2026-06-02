@@ -28,10 +28,10 @@ export class ConfigTreeProvider implements vscode.TreeDataProvider<ConfigTreeIte
   getChildren(element?: ConfigTreeItem): ConfigTreeItem[] {
     if (!element) {
       return [
-        this.button('configure-zen', '🔵 Configure Zen Key', this.zenKey ? `Current: ${this.mask(this.zenKey)}` : 'Not configured', 'opencodeConfigureZen'),
-        this.button('configure-go', '🟢 Configure Go Key', this.goKey ? `Current: ${this.mask(this.goKey)}` : 'Not configured', 'opencodeConfigureGo'),
-        this.button('refresh-all', '🔄 Refresh All Models', 'Reload models from API', 'opencodeRefreshAll'),
-        this.button('clear-stats', '🗑️ Clear Usage Stats', 'Reset session statistics', 'opencodeClearUsage'),
+        this.button('configure-zen', '🔵 Configure Zen Key', this.zenKey ? `Current: ${this.mask(this.zenKey)}` : 'Not configured', 'opencode-zen.configureZen'),
+        this.button('configure-go', '🟢 Configure Go Key', this.goKey ? `Current: ${this.mask(this.goKey)}` : 'Not configured', 'opencode-zen.configureGo'),
+        this.button('refresh-all', '🔄 Refresh All Models', 'Reload models from API', 'opencode-zen.refreshAll'),
+        this.button('clear-stats', '🗑️ Clear Usage Stats', 'Reset session statistics', 'opencode-zen.clearUsage'),
       ];
     }
     return element.children ?? [];

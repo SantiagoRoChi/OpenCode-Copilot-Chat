@@ -416,12 +416,20 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
     if (now - this.lastUsageFetch < USAGE_CACHE_TTL && this.lastUsage) {
       return this.lastUsage;
     }
-    const usage = await this.client.getUsage(this.apiKey, this.endpoint);
-    if (usage) {
-      this.lastUsage = usage;
-      this.lastUsageFetch = now;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const usage = await this.client.getUsage(this.apiKey, this.endpoint, controller.signal);
+      clearTimeout(timeout);
+      if (usage) {
+        this.lastUsage = usage;
+        this.lastUsageFetch = now;
+      }
+      return usage;
+    } catch {
+      clearTimeout(timeout);
+      return undefined;
     }
-    return usage;
   }
 
   getApiUsage(): ApiUsageResponse | undefined {

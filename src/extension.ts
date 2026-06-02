@@ -104,8 +104,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   for (const conn of serverManager.getConnectedList()) {
-    const vendorId = 'opencode-server';
-    const existing = serverProviders.find(p => (p as any).vendor === vendorId);
+    const vendorId = `opencode-server-${conn.config.id}`;
+    const existing = serverProviders.find(p => p.vendor === vendorId);
     if (!existing) {
       const provider = new OpenCodeServerProvider(
         context,
@@ -115,10 +115,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         conn.client
       );
       serverProviders.push(provider);
-      context.subscriptions.push(
-        vscode.lm.registerLanguageModelChatProvider(vendorId, provider)
-      );
+      const disposable = vscode.lm.registerLanguageModelChatProvider(vendorId, provider);
+      context.subscriptions.push(disposable);
       context.subscriptions.push(provider);
+      console.log(`OpenCode Zen: registered server provider "${vendorId}" for "${conn.config.name}"`);
     }
   }
 

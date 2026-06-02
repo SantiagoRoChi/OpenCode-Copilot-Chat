@@ -63,7 +63,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
   readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
   readonly onDidChangeRequestState = this._onDidChangeRequestState.event;
 
-  get vendor(): string { return 'opencode-server'; }
+  public get vendor(): string { return `opencode-server-${this.serverId}`; }
   get displayName(): string { return `OpenCode ${this.serverName}`; }
 
   constructor(
@@ -155,7 +155,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
             id: modelId,
             name: label,
             description: `${provider.name} · ${info.maxInputTokens.toLocaleString()} in · ${info.maxOutputTokens.toLocaleString()} out`,
-            vendor: 'opencode-server',
+            vendor: this.vendor,
             family: provider.name,
             version: modelData.version || '1',
             maxInputTokens: info.maxInputTokens,

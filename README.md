@@ -59,8 +59,24 @@ Extensión para VS Code que registra modelos de [OpenCode Zen](https://opencode.
 
 - SSE streaming en tiempo real
 - Tool calling con JSON repair automático
-- Reasoning content bufferizado
+- Reasoning content como bloques colapsables (`LanguageModelThinkingPart`)
 - Soporte para `reasoning_content` (DeepSeek, MiMo, Kimi)
+
+### Subagent Tool
+
+Herramienta `opencode_subagent` registrada para que Copilot Chat pueda delegar tareas a un provider OpenCode:
+
+```json
+{
+  "name": "opencode_subagent",
+  "query": "Ejecuta ls -la en la terminal",
+  "description": "Listando archivos del directorio actual"
+}
+```
+
+- Delega al primer provider disponible (Free → Go → Zen)
+- Temperature 0, sin tools adicionales
+- Retorna resultado con metadata
 
 ## 📦 Instalación
 

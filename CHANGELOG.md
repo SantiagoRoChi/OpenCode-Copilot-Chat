@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.2.0] - 2026-06-02
+
+### Added
+- **Subagent tool** (`opencode_subagent`): Registered via `vscode.lm.registerTool()`, delegates to first available OpenCode provider. Accepts `query` and `description` parameters. Runs with temperature 0, no additional tools.
+- **Thinking blocks**: Server provider and BaseOpenCodeProvider now use `LanguageModelThinkingPart` for collapsible reasoning content. Falls back to text markers if API unavailable.
+
+### Fixed
+- Tool registration in `package.json` — requires `modelDescription`, `displayName`, and `inputSchema` fields
+
 ## [3.1.0] - 2026-06-02
 
 ### Fixed

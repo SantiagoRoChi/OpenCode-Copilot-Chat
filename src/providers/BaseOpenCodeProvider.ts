@@ -277,9 +277,15 @@ async provideLanguageModelChatResponse(
       hasImages = messages.some(msg =>
         msg.content.some(part => {
           try {
-            return part instanceof vscode.LanguageModelImagePart;
+            if (part instanceof vscode.LanguageModelImagePart) return true;
+            // Check for DataPart with image mime types
+            if (part instanceof vscode.LanguageModelDataPart) {
+              const mime = part.mimeType || '';
+              return mime.startsWith('image/');
+            }
+            return false;
           } catch {
-            return (part as any).mimeType !== undefined && (part as any).mimeType !== null;
+            return false;
           }
         })
       );

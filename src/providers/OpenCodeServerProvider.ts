@@ -292,15 +292,6 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
       const { tools, schemas } = this.buildToolsConfig(options);
       const hasTools = tools !== undefined && tools.length > 0;
 
-      const requestBody: any = {
-        model: modelId,
-        messages: truncatedMessages,
-        max_tokens: safeMaxOutputTokens,
-        temperature: hasTools ? 0 : 0.7,
-        stream: true,
-        ...(hasTools && { tools, tool_choice: this.mapToolChoice(options.toolMode) }),
-      };
-
       const abortController = new AbortController();
       token.onCancellationRequested(() => abortController.abort());
 
@@ -308,100 +299,55 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
       const authHeaders = entry.client.buildHeaders();
       Object.assign(headers, authHeaders);
 
-      const response = await fetch(`${entry.baseUrl}/chat/completions`, {
+      // Create or reuse a session
+      const sessionUrl = `${entry.baseUrl}/session`;
+      const sessionRes = await fetch(sessionUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ title: 'VS Code Chat' }),
+        signal: abortController.signal,
+      });
+      if (!sessionRes.ok) throw new Error(`Failed to create session: HTTP ${sessionRes.status}`);
+      const sessionData = await sessionRes.json() as any;
+      const sessionId = sessionData.id;
+      this.outputChannel.appendLine(`[${entry.serverName}] Session: ${sessionId}`);
+
+      // Send message using session API
+      const messageUrl = `${entry.baseUrl}/session/${sessionId}/message`;
+      const requestBody = {
+        model: modelId,
+        parts: truncatedMessages.map(m => ({
+          type: 'text',
+          text: typeof m.content === 'string' ? m.content : m.content.map((c: any) => c.text || '').join(''),
+        })).filter((p: any) => p.text),
+      };
+
+      this.outputChannel.appendLine(`[${entry.serverName}] POST ${messageUrl}`);
+      const messageRes = await fetch(messageUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(requestBody),
         signal: abortController.signal,
       });
 
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`HTTP ${response.status}: ${body}`);
+      if (!messageRes.ok) {
+        const body = await messageRes.text().catch(() => '');
+        throw new Error(`HTTP ${messageRes.status}: ${body}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response body');
+      const messageData = await messageRes.json() as any;
+      this.outputChannel.appendLine(`[${entry.serverName}] Response: ${JSON.stringify(messageData).slice(0, 200)}`);
 
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let lineCount = 0;
-
-      this.outputChannel.appendLine(`[${entry.serverName}] Reading SSE stream...`);
-
-      const controller = new ReadableStream({
-        start: async (rc) => {
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() || '';
-              for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed || trimmed.startsWith(':')) continue;
-                if (trimmed.startsWith('data: ')) {
-                  const data = trimmed.slice(6);
-                  if (data === '[DONE]') {
-                    this.outputChannel.appendLine(`[${entry.serverName}] SSE: [DONE] after ${lineCount} lines`);
-                    rc.close(); return;
-                  }
-                  try {
-                    const chunk = JSON.parse(data);
-                    rc.enqueue(chunk);
-                    lineCount++;
-                    if (lineCount <= 3) {
-                      this.outputChannel.appendLine(`[${entry.serverName}] SSE chunk ${lineCount}: model=${chunk.model}, choices=${chunk.choices?.length}`);
-                    }
-                  } catch (e) {
-                    this.outputChannel.appendLine(`[${entry.serverName}] SSE parse error: ${e} — data: "${data.slice(0, 100)}"`);
-                  }
-                }
-              }
-            }
-            this.outputChannel.appendLine(`[${entry.serverName}] SSE stream ended, ${lineCount} chunks`);
-            rc.close();
-          } catch (err) {
-            this.outputChannel.appendLine(`[${entry.serverName}] SSE stream error: ${err}`);
-            rc.error(err);
-          }
-        },
-      });
-
-      const reporter: StreamReporter = {
-        requestId,
-        sessionId: entry.serverId,
-        reportText: (text) => {
-          this.outputChannel.appendLine(`[${entry.serverName}] TEXT(${text.length}): "${text.slice(0, 80)}..."`);
-          progress.report(new vscode.LanguageModelTextPart(text));
-        },
-        reportThinking: () => {},
-        reportThinkingDone: () => {},
-        reportToolCall: (id, name, args) => {
-          this.outputChannel.appendLine(`[${entry.serverName}] TOOL: ${name}`);
-          progress.report(new vscode.LanguageModelToolCallPart(id, name, args));
-        },
-        reportUsage: (usage) => {
-          this.trackUsage(usage);
-        },
-        reportReasonerStep: () => {},
-        reportThinkingBlock: () => {},
-      };
-
-      this.outputChannel.appendLine(`[${entry.serverName}] Starting streamResponse...`);
-      await streamResponse({
-        chunks: controller as any,
-        reporter,
-        isCancelled: () => token.isCancellationRequested,
-        resolveToolCallArgs: (tc) => {
-          try { return JSON.parse(tc.function.arguments || '{}'); } catch { return {}; }
-        },
-      });
+      // Extract text from response parts
+      const parts = messageData.parts || [];
+      for (const part of parts) {
+        if (part.type === 'text' && part.text) {
+          progress.report(new vscode.LanguageModelTextPart(part.text));
+        }
+      }
 
       this.lastRequest = { modelId, modelName, completedAt: Date.now() };
-      this.sessionStats.requestCount++;
-      this.outputChannel.appendLine(`[${entry.serverName}] response complete`);
+      this.outputChannel.appendLine(`[${entry.serverName}] Response complete`);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       this.outputChannel.appendLine(`[${entry.serverName}] ERROR: ${errorMessage}`);

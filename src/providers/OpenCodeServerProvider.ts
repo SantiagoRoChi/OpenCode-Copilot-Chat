@@ -10,7 +10,9 @@ import {
   ToolDefinition,
   ChatMessage,
 } from '../client/types';
-import { streamResponse } from '../streaming/responseStreamer';
+import { streamResponse, StreamReporter } from '../streaming/responseStreamer';
+import { convertTools, resolveToolCallArgs } from '../tools/toolCallAdapter';
+import { ChatCompletionChunk, ToolCall, ToolDefinition } from '../client/types';
 import { convertMessage } from '../streaming/messageConverter';
 import {
   TOKEN_CONSTANTS,
@@ -265,14 +267,17 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
         requestBody.temperature = config.agentTemperature || DEFAULT_TEMPERATURE;
       }
 
+      const abortController = new AbortController();
+      token.onCancellationRequested(() => abortController.abort());
+
       const requestOptions: RequestInit = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(this.serverClient as any).buildHeaders?.() || {},
+          ...this.serverClient.buildHeaders(),
         },
         body: JSON.stringify(requestBody),
-        signal: token ? (token as any) : undefined,
+        signal: abortController.signal,
       };
 
       const response = await fetch(`${this.baseUrl}/chat`, requestOptions);
@@ -282,16 +287,25 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
-      const result = await streamResponse(
-        response,
-        progress,
-        token,
-        (part) => {
-          if (part.usage) {
-            this.trackUsage(part.usage);
-          }
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const chunks = this.parseSSEStream(reader);
+      const reporter = this.createStreamReporter(requestId, progress, token);
+
+      const toolSchemas = new Map<string, Record<string, unknown> | undefined>();
+      if (options.tools) {
+        for (const t of options.tools) {
+          toolSchemas.set(t.name, t.inputSchema as Record<string, unknown> | undefined);
         }
-      );
+      }
+
+      const result = await streamResponse({
+        chunks,
+        reporter,
+        isCancelled: () => token.isCancellationRequested,
+        resolveToolCallArgs: (tc) => resolveToolCallArgs(tc, toolSchemas),
+      });
 
       this.lastRequest = {
         modelId: model.id,
@@ -331,6 +345,84 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
   }
 
   private trackUsage(usage: { prompt?: number; completion?: number }): void {
+  }
+
+  private parseSSEStream(
+    reader: ReadableStreamDefaultReader<Uint8Array>
+  ): ReadableStream<ChatCompletionChunk> {
+    return new ReadableStream({
+      start: async (controller) => {
+        try {
+          const decoder = new TextDecoder();
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith(':')) continue;
+              if (trimmed.startsWith('data: ')) {
+                const data = trimmed.slice(6);
+                if (data === '[DONE]') {
+                  controller.close();
+                  return;
+                }
+                try {
+                  const chunk = JSON.parse(data) as ChatCompletionChunk;
+                  controller.enqueue(chunk);
+                } catch {
+                  // Skip malformed chunks
+                }
+              }
+            }
+          }
+          controller.close();
+        } catch (err) {
+          controller.error(err);
+        }
+      },
+    });
+  }
+
+  private createStreamReporter(
+    requestId: string,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    token: vscode.CancellationToken
+  ): StreamReporter {
+    const reasonerOutputs: string[] = [];
+    const reasonerSteps: { stepId: string; label: string; startedAt: number; tokens?: number }[] = [];
+    return {
+      requestId,
+      sessionId: this.providerSessionId,
+      reportText: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
+      reportThinking: (text) => {
+        reasonerOutputs.push(text);
+      },
+      reportThinkingDone: () => { /* no-op */ },
+      reportThinkingBlock: (text) => {
+        if (reasonerOutputs.length > 0) {
+          const full = reasonerOutputs.join('');
+          reasonerOutputs.length = 0;
+          progress.report(new vscode.LanguageModelTextPart(`\n[reasoning]${full}[/reasoning]\n`));
+        }
+      },
+      reportToolCall: (id, name, args) =>
+        progress.report(new vscode.LanguageModelToolCallPart(id, name, args)),
+      reportUsage: (usage) => {
+        this.trackUsage({
+          prompt: usage.prompt_tokens,
+          completion: usage.completion_tokens,
+        });
+        const payload = new TextEncoder().encode(JSON.stringify(usage));
+        progress.report(new vscode.LanguageModelDataPart(payload, 'usage'));
+      },
+      reportReasonerStep: (stepId, label, tokens) => {
+        reasonerSteps.push({ stepId, label, startedAt: Date.now(), tokens });
+      },
+    };
   }
 
   showOutput(): void {

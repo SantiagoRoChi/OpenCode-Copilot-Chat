@@ -66,7 +66,7 @@ export class ServerApiClient {
     this.requestTimeout = timeout;
   }
 
-  private buildHeaders(): HeadersInit {
+  public buildHeaders(): HeadersInit {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.username && this.password) {
       const encoded = Buffer.from(`${this.username}:${this.password}`).toString('base64');

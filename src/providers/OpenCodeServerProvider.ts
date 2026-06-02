@@ -18,7 +18,7 @@ import {
   buildInputText,
 } from '../utils/tokenEstimate';
 import { loadConfig } from '../config/settings';
-import { getModelCapabilities } from '../client/modelRegistry';
+import { getModelCapabilities, ModelCapabilities } from '../client/modelRegistry';
 
 export type ServerRequestStateEvent =
   | { kind: 'start'; modelId: string; modelName: string }
@@ -41,6 +41,32 @@ interface ServerEntry {
   baseUrl: string;
   client: ServerApiClient;
   connected: boolean;
+}
+
+const DEFAULT_INPUT = 128000;
+const DEFAULT_OUTPUT = 32000;
+
+function matchModelId(serverModelId: string): ModelCapabilities | undefined {
+  let caps = getModelCapabilities(serverModelId);
+  if (caps.name !== serverModelId) return caps;
+
+  const slashIndex = serverModelId.lastIndexOf('/');
+  if (slashIndex >= 0) {
+    const shortId = serverModelId.slice(slashIndex + 1);
+    caps = getModelCapabilities(shortId);
+    if (caps.name !== shortId) return caps;
+  }
+
+  const prefixes = ['opencode/', 'opencode-go/', 'openai/', 'anthropic/', 'google/'];
+  for (const prefix of prefixes) {
+    if (serverModelId.startsWith(prefix)) {
+      const shortId = serverModelId.slice(prefix.length);
+      caps = getModelCapabilities(shortId);
+      if (caps.name !== shortId) return caps;
+    }
+  }
+
+  return undefined;
 }
 
 export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider {
@@ -124,6 +150,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
         }
 
         const connectedIds = providers.connected || [];
+        let serverModelCount = 0;
 
         for (const provider of providers.all || []) {
           const isConnected = provider.connected || connectedIds.includes(provider.id);
@@ -133,22 +160,26 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
           for (const [modelId, modelData] of modelEntries) {
             const uniqueId = `${serverId}:${modelId}`;
 
-            // Get real capabilities from models.dev registry
-            const caps = getModelCapabilities(modelId);
-            const maxInput = modelData.maxTokens || caps.maxInputTokens;
-            const maxOutput = modelData.maxOutputTokens || caps.maxOutputTokens;
+            const matchedCaps = matchModelId(modelId);
+            const maxInput = modelData.maxTokens || (matchedCaps?.maxInputTokens ?? DEFAULT_INPUT);
+            const maxOutput = modelData.maxOutputTokens || (matchedCaps?.maxOutputTokens ?? DEFAULT_OUTPUT);
+            const imageInput = matchedCaps?.imageInput ?? false;
+            const toolCalling = matchedCaps?.toolCalling ?? true;
+            const reasoning = matchedCaps?.reasoning ?? false;
+            const name = matchedCaps?.name ?? (modelData.name || modelId.split('/').pop() || modelId);
+            const family = matchedCaps?.family ?? modelId.split('-')[0];
 
             const info: ServerModelInfo = {
               id: modelId,
-              name: caps.name !== modelId ? caps.name : (modelData.name || modelId.split('/').pop() || modelId),
-              family: caps.family,
+              name,
+              family,
               maxInputTokens: maxInput,
               maxOutputTokens: maxOutput,
               contextLabel: `${Math.round(maxInput / 1000)}K`,
               capabilityLabels: [
-                ...(caps.toolCalling ? ['Tools'] : []),
-                ...(caps.imageInput ? ['Vision'] : []),
-                ...(caps.reasoning ? ['Reasoning'] : []),
+                ...(toolCalling ? ['Tools'] : []),
+                ...(imageInput ? ['Vision'] : []),
+                ...(reasoning ? ['Reasoning'] : []),
               ],
             };
 
@@ -164,12 +195,12 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
               maxInputTokens: maxInput,
               maxOutputTokens: maxOutput,
               capabilities: {
-                imageInput: caps.imageInput,
-                toolCalling: caps.toolCalling,
+                imageInput,
+                toolCalling,
               },
             };
 
-            if (caps.reasoning) {
+            if (reasoning) {
               (chatInfo as any).configurationSchema = {
                 properties: {
                   reasoningEffort: {

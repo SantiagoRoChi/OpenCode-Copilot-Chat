@@ -152,9 +152,10 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
             version: modelData.version || '1',
             maxInputTokens: info.maxInputTokens,
             maxOutputTokens: info.maxOutputTokens,
-            supportedLanguageModelCapabilities: [
-              vscode.LanguageModelChatCapability.InContextLearning,
-            ],
+            capabilities: {
+              imageInput: !!modelData.supportsImages,
+              toolCalling: !!modelData.supportsTools,
+            },
           });
         }
       }

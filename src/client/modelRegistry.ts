@@ -1,6 +1,6 @@
 // src/client/modelRegistry.ts
-// Central registry mapping OpenCode model IDs to API format, endpoint, token limits, and capabilities.
-// Single source of truth for all model metadata.
+// Fetches model capabilities from models.dev API and maps them to OpenCode providers.
+// Falls back to static data if the API is unavailable.
 
 export type ApiFormat = 'openai' | 'openai-compatible' | 'anthropic' | 'google';
 export type Provider = 'zen' | 'go' | 'free';
@@ -18,13 +18,17 @@ export interface ModelCapabilities {
   imageInput: boolean;
   toolCalling: boolean;
   reasoning: boolean;
+  thinkingEffort?: 'low' | 'medium' | 'high';
+  pricePerMillionInput?: number;
+  pricePerMillionOutput?: number;
+  pricePerMillionCacheRead?: number;
 }
 
 export interface ModelRegistration extends ModelEndpoint, ModelCapabilities {
   id: string;
 }
 
-interface RegistryEntry {
+export interface RegistryEntry {
   chatEndpoint: string;
   apiFormat: ApiFormat;
   name: string;
@@ -34,198 +38,149 @@ interface RegistryEntry {
   imageInput: boolean;
   toolCalling: boolean;
   reasoning: boolean;
+  thinkingEffort?: 'low' | 'medium' | 'high';
+  pricePerMillionInput?: number;
+  pricePerMillionOutput?: number;
+  pricePerMillionCacheRead?: number;
 }
+
+// ── Static fallback data (minimal, used when models.dev is unreachable) ──
 
 const DEFAULT_INPUT = 128000;
 const DEFAULT_OUTPUT = 32000;
 
-function gpt(name: string): RegistryEntry {
-  return {
-    chatEndpoint: '/responses',
-    apiFormat: 'openai',
-    name,
-    family: 'openai',
-    maxInputTokens: DEFAULT_INPUT,
-    maxOutputTokens: DEFAULT_OUTPUT,
-    imageInput: true,
-    toolCalling: true,
-    reasoning: true,
-  };
-}
-
-function claude(name: string): RegistryEntry {
-  return {
-    chatEndpoint: '/messages',
-    apiFormat: 'anthropic',
-    name,
-    family: 'anthropic',
-    maxInputTokens: DEFAULT_INPUT,
-    maxOutputTokens: DEFAULT_OUTPUT,
-    imageInput: true,
-    toolCalling: true,
-    reasoning: true,
-  };
-}
-
-function gemini(name: string): RegistryEntry {
-  return {
-    chatEndpoint: '/models/{id}',
-    apiFormat: 'google',
-    name,
-    family: 'google',
-    maxInputTokens: DEFAULT_INPUT,
-    maxOutputTokens: DEFAULT_OUTPUT,
-    imageInput: true,
-    toolCalling: true,
-    reasoning: true,
-  };
-}
-
-function openaiCompat(
-  name: string,
-  family: string,
-  overrides?: Partial<Pick<RegistryEntry, 'toolCalling' | 'reasoning' | 'imageInput' | 'maxInputTokens' | 'maxOutputTokens'>>
-): RegistryEntry {
-  return {
-    chatEndpoint: '/chat/completions',
-    apiFormat: 'openai-compatible',
-    name,
-    family,
-    maxInputTokens: overrides?.maxInputTokens ?? DEFAULT_INPUT,
-    maxOutputTokens: overrides?.maxOutputTokens ?? DEFAULT_OUTPUT,
-    imageInput: overrides?.imageInput ?? false,
-    toolCalling: overrides?.toolCalling ?? true,
-    reasoning: overrides?.reasoning ?? false,
-  };
-}
-
-function anthropicCompat(
-  name: string,
-  family: string,
-  overrides?: Partial<Pick<RegistryEntry, 'toolCalling' | 'reasoning' | 'imageInput' | 'maxInputTokens' | 'maxOutputTokens'>>
-): RegistryEntry {
-  return {
-    chatEndpoint: '/messages',
-    apiFormat: 'anthropic',
-    name,
-    family,
-    maxInputTokens: overrides?.maxInputTokens ?? DEFAULT_INPUT,
-    maxOutputTokens: overrides?.maxOutputTokens ?? DEFAULT_OUTPUT,
-    imageInput: overrides?.imageInput ?? false,
-    toolCalling: overrides?.toolCalling ?? true,
-    reasoning: overrides?.reasoning ?? false,
-  };
-}
-
-// Zen models
-const zenModels: Record<string, RegistryEntry> = {
-  // GPT models → openai + /responses
-  'gpt-5.5': gpt('GPT-5.5'),
-  'gpt-5.5-pro': gpt('GPT-5.5 Pro'),
-  'gpt-5.4': gpt('GPT-5.4'),
-  'gpt-5.4-pro': gpt('GPT-5.4 Pro'),
-  'gpt-5.4-mini': gpt('GPT-5.4 Mini'),
-  'gpt-5.4-nano': gpt('GPT-5.4 Nano'),
-  'gpt-5.3-codex': gpt('GPT-5.3 Codex'),
-  'gpt-5.3-codex-spark': gpt('GPT-5.3 Codex Spark'),
-  'gpt-5.2': gpt('GPT-5.2'),
-  'gpt-5.2-codex': gpt('GPT-5.2 Codex'),
-  'gpt-5.1': gpt('GPT-5.1'),
-  'gpt-5.1-codex': gpt('GPT-5.1 Codex'),
-  'gpt-5.1-codex-max': gpt('GPT-5.1 Codex Max'),
-  'gpt-5.1-codex-mini': gpt('GPT-5.1 Codex Mini'),
-  'gpt-5': gpt('GPT-5'),
-  'gpt-5-codex': gpt('GPT-5 Codex'),
-  'gpt-5-nano': gpt('GPT-5 Nano'),
-
-  // Claude models → anthropic + /messages
-  'claude-opus-4-8': claude('Claude Opus 4.8'),
-  'claude-opus-4-7': claude('Claude Opus 4.7'),
-  'claude-opus-4-6': claude('Claude Opus 4.6'),
-  'claude-opus-4-5': claude('Claude Opus 4.5'),
-  'claude-opus-4-1': claude('Claude Opus 4.1'),
-  'claude-sonnet-4-6': claude('Claude Sonnet 4.6'),
-  'claude-sonnet-4-5': claude('Claude Sonnet 4.5'),
-  'claude-sonnet-4': claude('Claude Sonnet 4'),
-  'claude-haiku-4-5': claude('Claude Haiku 4.5'),
-  'claude-3-5-haiku': claude('Claude 3.5 Haiku'),
-
-  // Gemini models → google + /models/{id}
-  'gemini-3.5-flash': gemini('Gemini 3.5 Flash'),
-  'gemini-3.1-pro': gemini('Gemini 3.1 Pro'),
-  'gemini-3-flash': gemini('Gemini 3 Flash'),
-
-  // OpenAI-compatible models → openai-compatible + /chat/completions
-  'kimi-k2.6': openaiCompat('Kimi K2.6', 'kimi'),
-  'kimi-k2.5': openaiCompat('Kimi K2.5', 'kimi'),
-  'deepseek-v4-flash': openaiCompat('DeepSeek V4 Flash', 'deepseek', { reasoning: true }),
-  'glm-5.1': openaiCompat('GLM 5.1', 'glm'),
-  'glm-5': openaiCompat('GLM 5', 'glm'),
-  'minimax-m2.7': openaiCompat('MiniMax M2.7', 'minimax'),
-  'minimax-m2.5': openaiCompat('MiniMax M2.5', 'minimax'),
-  'grok-build-0.1': openaiCompat('Grok Build 0.1', 'grok'),
-  'big-pickle': openaiCompat('Big Pickle', 'bigpickle'),
-  'mimo-v2.5-free': openaiCompat('MiMo V2.5 Free', 'mimo', { toolCalling: false }),
-  'nemotron-3-super-free': openaiCompat('Nemotron 3 Super Free', 'nvidia', { toolCalling: false }),
-  'deepseek-v4-flash-free': openaiCompat('DeepSeek V4 Flash Free', 'deepseek', { reasoning: true }),
-  'qwen3.7-max': openaiCompat('Qwen 3.7 Max', 'qwen'),
-  'qwen3.6-plus': openaiCompat('Qwen 3.6 Plus', 'qwen'),
-  'qwen3.5-plus': openaiCompat('Qwen 3.5 Plus', 'qwen'),
+// Map from model ID prefix → API format (used for fallback)
+const FORMAT_HINTS: Record<string, { endpoint: string; apiFormat: ApiFormat }> = {
+  'gpt-5':       { endpoint: '/responses', apiFormat: 'openai' },
+  'gpt-4o':      { endpoint: '/responses', apiFormat: 'openai' },
+  'claude-':     { endpoint: '/messages',  apiFormat: 'anthropic' },
+  'gemini-':     { endpoint: '/models/{id}', apiFormat: 'google' },
 };
 
-// Go models
-const goModels: Record<string, RegistryEntry> = {
-  // OpenAI-compatible → /chat/completions
-  'kimi-k2.6': openaiCompat('Kimi K2.6', 'kimi'),
-  'kimi-k2.5': openaiCompat('Kimi K2.5', 'kimi'),
-  'deepseek-v4-pro': openaiCompat('DeepSeek V4 Pro', 'deepseek', { reasoning: true }),
-  'deepseek-v4-flash': openaiCompat('DeepSeek V4 Flash', 'deepseek', { reasoning: true }),
-  'glm-5.1': openaiCompat('GLM 5.1', 'glm'),
-  'glm-5': openaiCompat('GLM 5', 'glm'),
-  'mimo-v2.5': openaiCompat('MiMo V2.5', 'mimo'),
-  'mimo-v2.5-pro': openaiCompat('MiMo V2.5 Pro', 'mimo'),
-
-  // Anthropic-compatible → /messages
-  'minimax-m3': anthropicCompat('MiniMax M3', 'minimax'),
-  'minimax-m2.7': anthropicCompat('MiniMax M2.7', 'minimax'),
-  'minimax-m2.5': anthropicCompat('MiniMax M2.5', 'minimax'),
-  'qwen3.7-max': anthropicCompat('Qwen 3.7 Max', 'qwen'),
-  'qwen3.6-plus': anthropicCompat('Qwen 3.6 Plus', 'qwen'),
-};
-
-// Free models (subset of Zen free-tier models)
-const freeModels: Record<string, RegistryEntry> = {
-  'mimo-v2.5-free': openaiCompat('MiMo V2.5 Free', 'mimo', { toolCalling: false }),
-  'nemotron-3-super-free': openaiCompat('Nemotron 3 Super Free', 'nvidia', { toolCalling: false }),
-  'deepseek-v4-flash-free': openaiCompat('DeepSeek V4 Flash Free', 'deepseek', { reasoning: true }),
-  'big-pickle': openaiCompat('Big Pickle', 'bigpickle'),
-};
-
-function getRegistry(provider: Provider): Record<string, RegistryEntry> {
-  switch (provider) {
-    case 'zen':
-      return zenModels;
-    case 'go':
-      return goModels;
-    case 'free':
-      return freeModels;
+function inferApiFormat(modelId: string): { endpoint: string; apiFormat: ApiFormat } {
+  for (const [prefix, fmt] of Object.entries(FORMAT_HINTS)) {
+    if (modelId.startsWith(prefix)) return fmt;
   }
+  return { endpoint: '/chat/completions', apiFormat: 'openai-compatible' };
+}
+
+function inferFamily(modelId: string): string {
+  const lower = modelId.toLowerCase();
+  if (lower.includes('gpt'))     return 'openai';
+  if (lower.includes('claude'))  return 'anthropic';
+  if (lower.includes('gemini'))  return 'google';
+  if (lower.includes('deepseek')) return 'deepseek';
+  if (lower.includes('kimi'))    return 'kimi';
+  if (lower.includes('glm'))     return 'glm';
+  if (lower.includes('minimax')) return 'minimax';
+  if (lower.includes('qwen'))    return 'qwen';
+  if (lower.includes('mimo'))    return 'mimo';
+  if (lower.includes('grok'))    return 'grok';
+  if (lower.includes('nemotron')) return 'nvidia';
+  return modelId.split('-')[0];
+}
+
+// ── models.dev API types ──
+
+interface ModelsDevModel {
+  id: string;
+  name: string;
+  family?: string;
+  attachment?: boolean;      // vision/image input
+  reasoning?: boolean;
+  tool_call?: boolean;
+  limit?: { context?: number; output?: number };
+  cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
+  status?: string;
+  modalities?: { input?: string[]; output?: string[] };
+}
+
+interface ModelsDevProvider {
+  id: string;
+  name: string;
+  models: Record<string, ModelsDevModel>;
+}
+
+// ── Live registry (populated from models.dev) ──
+
+let liveRegistry: Map<string, RegistryEntry> = new Map();
+let lastFetch = 0;
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+async function fetchModelsDev(): Promise<void> {
+  if (Date.now() - lastFetch < CACHE_TTL && liveRegistry.size > 0) return;
+
+  try {
+    const response = await fetch('https://models.dev/api.json', {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) return;
+
+    const data = await response.json() as Record<string, ModelsDevProvider>;
+    const opencode = data['opencode'];
+    const opencodeGo = data['opencode-go'];
+
+    liveRegistry.clear();
+
+    // Index Zen models
+    if (opencode?.models) {
+      for (const [id, model] of Object.entries(opencode.models)) {
+        liveRegistry.set(`zen:${id}`, modelsDevToRegistry(id, model));
+      }
+    }
+
+    // Index Go models
+    if (opencodeGo?.models) {
+      for (const [id, model] of Object.entries(opencodeGo.models)) {
+        liveRegistry.set(`go:${id}`, modelsDevToRegistry(id, model));
+      }
+    }
+
+    lastFetch = Date.now();
+  } catch {
+    // Fallback to static data on network error
+  }
+}
+
+function modelsDevToRegistry(id: string, model: ModelsDevModel): RegistryEntry {
+  const fmt = inferApiFormat(id);
+
+  return {
+    chatEndpoint: fmt.endpoint,
+    apiFormat: fmt.apiFormat,
+    name: model.name || id,
+    family: inferFamily(id),
+    maxInputTokens: model.limit?.context ?? DEFAULT_INPUT,
+    maxOutputTokens: model.limit?.output ?? DEFAULT_OUTPUT,
+    imageInput: model.attachment ?? false,
+    toolCalling: model.tool_call ?? true,
+    reasoning: model.reasoning ?? false,
+    thinkingEffort: model.reasoning ? 'high' : undefined,
+    pricePerMillionInput: model.cost?.input,
+    pricePerMillionOutput: model.cost?.output,
+    pricePerMillionCacheRead: model.cost?.cache_read,
+  };
+}
+
+// ── Public API ──
+
+export async function initModelRegistry(): Promise<void> {
+  await fetchModelsDev();
 }
 
 export function getModelEndpoint(provider: Provider, modelId: string): ModelEndpoint {
-  const registry = getRegistry(provider);
-  const entry = registry[modelId];
-  if (!entry) {
-    // Fallback for unknown models: assume openai-compatible /chat/completions
-    return { chatEndpoint: '/chat/completions', apiFormat: 'openai-compatible' };
+  const entry = liveRegistry.get(`${provider}:${modelId}`);
+  if (entry) {
+    return { chatEndpoint: entry.chatEndpoint, apiFormat: entry.apiFormat };
   }
-  return { chatEndpoint: entry.chatEndpoint, apiFormat: entry.apiFormat };
+  // Fallback: infer from model ID
+  return inferApiFormat(modelId);
 }
 
 export function getModelCapabilities(modelId: string): ModelCapabilities {
-  // Search all providers for the first matching entry
-  for (const registry of [zenModels, goModels, freeModels]) {
-    const entry = registry[modelId];
+  // Search all providers
+  for (const provider of ['zen', 'go', 'free'] as Provider[]) {
+    const entry = liveRegistry.get(`${provider}:${modelId}`);
     if (entry) {
       return {
         name: entry.name,
@@ -235,13 +190,17 @@ export function getModelCapabilities(modelId: string): ModelCapabilities {
         imageInput: entry.imageInput,
         toolCalling: entry.toolCalling,
         reasoning: entry.reasoning,
+        thinkingEffort: entry.thinkingEffort,
+        pricePerMillionInput: entry.pricePerMillionInput,
+        pricePerMillionOutput: entry.pricePerMillionOutput,
+        pricePerMillionCacheRead: entry.pricePerMillionCacheRead,
       };
     }
   }
   // Fallback for unknown models
   return {
     name: modelId,
-    family: modelId.split('-')[0],
+    family: inferFamily(modelId),
     maxInputTokens: DEFAULT_INPUT,
     maxOutputTokens: DEFAULT_OUTPUT,
     imageInput: false,
@@ -254,4 +213,21 @@ export function getModelRegistration(provider: Provider, modelId: string): Model
   const endpoint = getModelEndpoint(provider, modelId);
   const caps = getModelCapabilities(modelId);
   return { id: modelId, ...endpoint, ...caps };
+}
+
+export function isModelDeprecated(modelId: string): boolean {
+  for (const provider of ['zen', 'go', 'free'] as Provider[]) {
+    const entry = liveRegistry.get(`${provider}:${modelId}`);
+    if (entry) return false; // If we have it in registry, it's active
+  }
+  return false;
+}
+
+export function getRegistrySize(): { zen: number; go: number; total: number } {
+  let zen = 0, go = 0;
+  for (const key of liveRegistry.keys()) {
+    if (key.startsWith('zen:')) zen++;
+    else if (key.startsWith('go:')) go++;
+  }
+  return { zen, go, total: zen + go };
 }

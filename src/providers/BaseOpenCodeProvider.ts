@@ -183,7 +183,7 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
 
   protected toChatInformation(m: ApiModel, info: ModelInfo): vscode.LanguageModelChatInformation {
     const caps = getModelCapabilities(m.id);
-    return {
+    const chatInfo: vscode.LanguageModelChatInformation = {
       id: m.id,
       name: m.id,
       family: info.family,
@@ -197,6 +197,22 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
         toolCalling: caps.toolCalling,
       },
     };
+
+    // Add thinking effort configuration for reasoning models
+    if (caps.reasoning) {
+      (chatInfo as any).configurationSchema = {
+        properties: {
+          reasoningEffort: {
+            type: 'string',
+            enum: ['low', 'medium', 'high'],
+            default: caps.thinkingEffort || 'medium',
+            description: 'Controls reasoning depth. Higher = more thorough but slower.',
+          },
+        },
+      };
+    }
+
+    return chatInfo;
   }
 
   protected inferFamily(id: string): string {

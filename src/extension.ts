@@ -9,6 +9,7 @@ import { SecretStorage } from './config/secretStorage';
 import { OpenCodeServerProvider } from './providers/OpenCodeServerProvider';
 import { MultiServerManager, initMultiServerManager } from './client/multiServerManager';
 import { OpenCodeTreeProvider } from './treeview/openCodeTreeProvider';
+import { initModelRegistry, getRegistrySize } from './client/modelRegistry';
 import { randomUUID } from 'crypto';
 
 let freeProvider: OpenCodeFreeProvider;
@@ -23,6 +24,12 @@ let serverProviders: OpenCodeServerProvider[] = [];
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   console.log('OpenCode Zen: activating...');
+
+  // Fetch model capabilities from models.dev (non-blocking)
+  void initModelRegistry().then(() => {
+    const size = getRegistrySize();
+    console.log(`OpenCode Zen: model registry loaded (${size.zen} Zen, ${size.go} Go models)`);
+  });
 
   freeProvider = new OpenCodeFreeProvider(context);
   goProvider = new OpenCodeGoProvider(context);

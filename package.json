@@ -21,6 +21,7 @@
   "keywords": [
     "opencode",
     "zen",
+    "go",
     "free",
     "models",
     "copilot",
@@ -59,6 +60,20 @@
             }
           }
         }
+      },
+      {
+        "vendor": "opencode-go",
+        "displayName": "OpenCode Go",
+        "configuration": {
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "secret": true,
+              "title": "OpenCode Go API Key",
+              "description": "API key from opencode.ai/auth for Go subscription."
+            }
+          }
+        }
       }
     ],
     "commands": [
@@ -81,8 +96,36 @@
         "command": "opencode-zen.showOutput",
         "title": "Show Output",
         "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.showUsage",
+        "title": "Show Usage Stats",
+        "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.clearUsage",
+        "title": "Clear Usage Stats",
+        "category": "OpenCode Zen"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "opencode-zen-usage",
+          "title": "OpenCode Zen",
+          "icon": "$(check)"
+        }
+      ]
+    },
+    "views": {
+      "opencode-zen-usage": [
+        {
+          "type": "webview",
+          "id": "opencode-zen-usage-view",
+          "name": "Usage Stats"
+        }
+      ]
+    },
     "configuration": {
       "title": "OpenCode Zen",
       "properties": {

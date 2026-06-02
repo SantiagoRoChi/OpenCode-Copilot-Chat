@@ -32,6 +32,7 @@ export class ZenProvider implements vscode.LanguageModelChatProvider {
   private readonly connector: OpenCodeConnector;
   private readonly secretStorage: SecretStorage;
   private readonly outputChannel: vscode.OutputChannel;
+  private readonly providerType: 'zen' | 'go';
   private config: ZenConfig;
   private apiKey: string = '';
 
@@ -53,8 +54,9 @@ export class ZenProvider implements vscode.LanguageModelChatProvider {
   private modelFetchCache?: { at: number; result: vscode.LanguageModelChatInformation[] };
   private configChangeDebounce?: ReturnType<typeof setTimeout>;
 
-  constructor(context: vscode.ExtensionContext) {
-    this.outputChannel = vscode.window.createOutputChannel('OpenCode Zen');
+  constructor(context: vscode.ExtensionContext, providerType: 'zen' | 'go' = 'zen') {
+    this.providerType = providerType;
+    this.outputChannel = vscode.window.createOutputChannel(`OpenCode ${providerType === 'go' ? 'Go' : 'Zen'}`);
     this.secretStorage = new SecretStorage(context);
     this.client = new ZenClient();
     this.registry = new ModelRegistry(this.outputChannel);
@@ -176,10 +178,22 @@ export class ZenProvider implements vscode.LanguageModelChatProvider {
 
     this.registry.refresh(this.apiKey || undefined);
 
-    const models = this.registry.getModels().map(def => buildModelInfo(def));
+    // Filter models based on provider type
+    const allModels = this.registry.getModels();
+    const filteredModels = allModels.filter(m => {
+      if (this.providerType === 'go') {
+        // Go provider: only show Go models
+        return m.provider === 'opencode-go' || m.tags.includes('go');
+      } else {
+        // Zen provider: only show Zen models (not Go)
+        return m.provider !== 'opencode-go' && !m.tags.includes('go');
+      }
+    });
+
+    const models = filteredModels.map(def => buildModelInfo(def));
 
     this.outputChannel.appendLine(
-      `Found ${models.length} models: ${models.map(m => m.id).join(', ')}`
+      `Found ${models.length} models (${this.providerType}): ${models.map(m => m.id).join(', ')}`
     );
 
     return models;
@@ -245,7 +259,14 @@ export class ZenProvider implements vscode.LanguageModelChatProvider {
       let capturedUsage: TokenUsage | undefined;
       const abortSignal = new AbortController();
       token.onCancellationRequested(() => abortSignal.abort());
-      const stream = this.client.streamChatCompletion(request, this.apiKey, abortSignal.signal);
+      
+      // Determine base URL based on model provider
+      const modelDef = this.registry.getModel(model.id);
+      const baseUrl = modelDef?.provider === 'opencode-go' 
+        ? 'https://opencode.ai/zen/go/v1' 
+        : undefined;
+      
+      const stream = this.client.streamChatCompletion(request, this.apiKey, abortSignal.signal, baseUrl);
 
       const reporter = this.createStreamReporter(progress, (usage) => {
         capturedUsage = usage;
@@ -361,6 +382,10 @@ export class ZenProvider implements vscode.LanguageModelChatProvider {
 
   showOutput(): void {
     this.outputChannel.show();
+  }
+
+  appendOutput(text: string): void {
+    this.outputChannel.appendLine(text);
   }
 
   private convertAllMessages(messages: readonly vscode.LanguageModelChatMessage[]): ChatMessage[] {

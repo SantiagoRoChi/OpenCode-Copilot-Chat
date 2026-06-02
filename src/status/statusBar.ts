@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { StatusSnapshot } from '../client/types';
+import { UsageStats } from './usageTracker';
 
 type StatusBarState =
   | { kind: 'probing' }
@@ -9,24 +10,34 @@ type StatusBarState =
   | { kind: 'streaming'; modelId: string; modelName: string }
   | { kind: 'responded'; modelId: string; modelName: string };
 
-function renderStatusBarText(state: StatusBarState): string {
+function renderStatusBarText(state: StatusBarState, usageStats?: UsageStats): string {
+  const usageText = usageStats && usageStats.totalRequests > 0
+    ? ` (${usageStats.totalRequests} req · ${formatTokens(usageStats.totalTokens.total)})`
+    : '';
+
   switch (state.kind) {
     case 'probing':
-      return '$(sync~spin) Zen';
+      return `$(sync~spin) Zen${usageText}`;
     case 'idle':
-      return `$(check) Zen`;
+      return `$(check) Zen${usageText}`;
     case 'noModels':
-      return '$(warning) Zen';
+      return `$(warning) Zen${usageText}`;
     case 'error':
-      return '$(error) Zen';
+      return `$(error) Zen${usageText}`;
     case 'streaming':
-      return `$(loading~spin) Zen`;
+      return `$(loading~spin) Zen${usageText}`;
     case 'responded':
-      return '$(check) Zen';
+      return `$(check) Zen${usageText}`;
   }
 }
 
-function renderTooltip(snapshot: StatusSnapshot): string {
+function formatTokens(tokens: number): string {
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
+  return tokens.toString();
+}
+
+function renderTooltip(snapshot: StatusSnapshot, usageStats?: UsageStats): string {
   const lines: string[] = [];
   lines.push('**OpenCode Zen**');
   lines.push('');
@@ -56,11 +67,24 @@ function renderTooltip(snapshot: StatusSnapshot): string {
   }
   lines.push('');
 
-  // Session stats
+  // Session stats from snapshot
   if (snapshot.sessionStats.requestCount > 0) {
     lines.push('**Session**');
     lines.push(`${snapshot.sessionStats.requestCount} requests`);
     lines.push(`${snapshot.sessionStats.totalTokens.total.toLocaleString()} tokens`);
+    lines.push('');
+  }
+
+  // Usage stats from tracker
+  if (usageStats && usageStats.totalRequests > 0) {
+    lines.push('**Usage**');
+    lines.push(`${usageStats.totalRequests} requests · ${usageStats.totalTokens.total.toLocaleString()} tokens`);
+    if (usageStats.byProvider.size > 0) {
+      for (const [provider, data] of usageStats.byProvider) {
+        const name = provider === 'opencode-go' ? 'Go' : 'Zen';
+        lines.push(`  ${name}: ${data.requests} req`);
+      }
+    }
     lines.push('');
   }
 
@@ -96,6 +120,7 @@ function formatTimeAgo(past: number, now: number): string {
 export class StatusBarManager implements vscode.Disposable {
   private item: vscode.StatusBarItem;
   private state: StatusBarState = { kind: 'probing' };
+  private usageStats?: UsageStats;
   private respondedRevertTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
@@ -103,7 +128,7 @@ export class StatusBarManager implements vscode.Disposable {
   ) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.item.name = 'OpenCode Zen';
-    this.item.command = 'opencode-zen.refreshModels';
+    this.item.command = 'opencode-zen.showUsage';
     this.render();
   }
 
@@ -113,6 +138,11 @@ export class StatusBarManager implements vscode.Disposable {
 
   hide(): void {
     this.item.hide();
+  }
+
+  updateUsage(stats: UsageStats): void {
+    this.usageStats = stats;
+    this.render();
   }
 
   setIdle(modelCount: number): void {
@@ -167,9 +197,9 @@ export class StatusBarManager implements vscode.Disposable {
   }
 
   private render(): void {
-    this.item.text = renderStatusBarText(this.state);
+    this.item.text = renderStatusBarText(this.state, this.usageStats);
     const snapshot = this.getSnapshot();
-    const md = new vscode.MarkdownString(renderTooltip(snapshot));
+    const md = new vscode.MarkdownString(renderTooltip(snapshot, this.usageStats));
     md.isTrusted = true;
     md.supportThemeIcons = true;
     md.supportHtml = false;

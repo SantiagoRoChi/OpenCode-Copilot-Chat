@@ -1,52 +1,62 @@
 import * as vscode from 'vscode';
 import { ZenModelDefinition } from '../client/types';
 
-const PROVIDER_DETAIL = 'OpenCode Zen';
-
 function formatContextLabel(tokens: number): string {
   if (tokens >= 1000000) {
-    return `${(tokens / 1000000).toFixed(1)}M ctx`;
+    return `${(tokens / 1000000).toFixed(1)}M`;
   }
   if (tokens >= 1000) {
-    return `${Math.round(tokens / 1000)}K ctx`;
+    return `${Math.round(tokens / 1000)}K`;
   }
-  return `${tokens} ctx`;
+  return `${tokens}`;
 }
 
 function formatPrice(price: number): string {
-  if (price === 0) return 'free';
-  if (price < 0.01) return `<$0.01`;
+  if (price === 0) return 'Free';
+  if (price < 0.01) return '<$0.01';
   return `$${price.toFixed(2)}`;
 }
 
 function buildTooltip(def: ZenModelDefinition): string {
   const parts: string[] = [];
-  parts.push(def.displayName);
+  parts.push(`**${def.displayName}**`);
   parts.push('');
-  parts.push(`Context: ${formatContextLabel(def.context.input)}`);
-  parts.push(`Max output: ${formatContextLabel(def.context.output)}`);
+  
+  // Context info
+  parts.push(`**Context:** ${formatContextLabel(def.context.input)} input · ${formatContextLabel(def.context.output)} output`);
   parts.push('');
-
+  
+  // Capabilities
   const caps: string[] = [];
-  if (def.capabilities.reasoning) caps.push('Reasoning');
-  if (def.capabilities.toolCalling) caps.push('Tools');
-  if (def.capabilities.imageInput) caps.push('Vision');
-  if (def.capabilities.streaming) caps.push('Streaming');
+  if (def.capabilities.reasoning) caps.push('🧠 Reasoning');
+  if (def.capabilities.toolCalling) caps.push('🛠️ Tools');
+  if (def.capabilities.imageInput) caps.push('👁️ Vision');
+  if (def.capabilities.streaming) caps.push('📡 Streaming');
+  if (def.capabilities.structuredOutput) caps.push('📋 Structured');
   if (caps.length > 0) {
-    parts.push(`Capabilities: ${caps.join(', ')}`);
+    parts.push(`**Capabilities:** ${caps.join(' · ')}`);
+    parts.push('');
   }
-
-  parts.push('');
+  
+  // Pricing
   if (def.pricing.input === 0 && def.pricing.output === 0) {
-    parts.push('Price: Free');
+    parts.push('**Price:** 🆓 Free');
   } else {
-    parts.push(`Input: ${formatPrice(def.pricing.input)}/1M tokens`);
-    parts.push(`Output: ${formatPrice(def.pricing.output)}/1M tokens`);
+    parts.push('**Cost per 1M Tokens:**');
+    parts.push(`  In: ${formatPrice(def.pricing.input)}`);
+    parts.push(`  Out: ${formatPrice(def.pricing.output)}`);
+    if (def.pricing.cachedRead !== undefined) {
+      parts.push(`  Cache: ${formatPrice(def.pricing.cachedRead)}`);
+    }
   }
-
+  
+  // Provider info
+  parts.push('');
+  parts.push(`**Provider:** ${def.provider === 'opencode-go' ? 'OpenCode Go' : 'OpenCode Zen'}`);
+  
   if (def.tags.includes('free')) {
     parts.push('');
-    parts.push('Limited time free availability');
+    parts.push('⚠️ Limited time free availability');
   }
 
   return parts.join('\n');
@@ -54,8 +64,12 @@ function buildTooltip(def: ZenModelDefinition): string {
 
 function buildDescription(def: ZenModelDefinition): string {
   const ctx = formatContextLabel(def.context.input);
-  const price = def.pricing.input === 0 ? 'free' : `${formatPrice(def.pricing.input)}/1M`;
-  return `${ctx} · ${def.family} · ${price}`;
+  const caps: string[] = [];
+  if (def.capabilities.toolCalling) caps.push('Tools');
+  if (def.capabilities.imageInput) caps.push('Vision');
+  const capsStr = caps.length > 0 ? caps.join(', ') : '';
+  const price = def.pricing.input === 0 ? 'Free' : `${formatPrice(def.pricing.input)}/1M`;
+  return `${ctx} · ${capsStr} · ${price}`;
 }
 
 function inferFamily(id: string): string {

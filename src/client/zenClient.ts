@@ -40,12 +40,14 @@ export class ZenClient {
   streamChatCompletion(
     request: ChatCompletionRequest,
     apiKey: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    baseUrl?: string
   ): ReadableStream<ChatCompletionChunk> {
+    const url = baseUrl || this.baseUrl;
     return new ReadableStream({
       start: async (controller) => {
         try {
-          const response = await fetch(`${this.baseUrl}/chat/completions`, {
+          const response = await fetch(`${url}/chat/completions`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${apiKey}`,

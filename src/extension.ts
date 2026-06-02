@@ -25,12 +25,12 @@ let serverProvider: OpenCodeServerProvider;
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   console.log('OpenCode Zen: activating...');
 
-  // Fetch model capabilities from models.dev (non-blocking)
-  void initModelRegistry().then(() => {
-    const size = getRegistrySize();
-    console.log(`OpenCode Zen: model registry loaded (${size.zen} Zen, ${size.go} Go models)`);
-  });
+  // Step 1: Fetch models.dev FIRST — all capabilities, pricing, context sizes
+  await initModelRegistry();
+  const size = getRegistrySize();
+  console.log(`OpenCode Zen: model registry loaded (${size.zen} Zen, ${size.go} Go models)`);
 
+  // Step 2: Create providers
   freeProvider = new OpenCodeFreeProvider(context);
   goProvider = new OpenCodeGoProvider(context);
   zenProvider = new OpenCodeZenProvider(context);

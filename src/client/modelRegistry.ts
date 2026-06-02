@@ -185,7 +185,7 @@ export function getModelEndpoint(provider: Provider, modelId: string): ModelEndp
 }
 
 export function getModelCapabilities(modelId: string): ModelCapabilities {
-  // Search all providers
+  // Search all providers for the first matching entry
   for (const provider of ['zen', 'go', 'free'] as Provider[]) {
     const entry = liveRegistry.get(`${provider}:${modelId}`);
     if (entry) {
@@ -204,6 +204,15 @@ export function getModelCapabilities(modelId: string): ModelCapabilities {
       };
     }
   }
+
+  // Try partial match (e.g., "opencode/deepseek-v4-flash" → "deepseek-v4-flash")
+  const slashIndex = modelId.lastIndexOf('/');
+  if (slashIndex >= 0) {
+    const shortId = modelId.slice(slashIndex + 1);
+    const result = getModelCapabilities(shortId);
+    if (result.name !== shortId) return result;
+  }
+
   // Fallback for unknown models
   return {
     name: modelId,

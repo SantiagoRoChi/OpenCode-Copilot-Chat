@@ -252,7 +252,14 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
             break;
           case 'reasoning':
             if (part.text) {
-              progress.report(new vscode.LanguageModelTextPart(`\n[reasoning]${part.text}[/reasoning]\n`));
+              // Use ThinkingPart for collapsible reasoning blocks
+              try {
+                const thinkingPart = new (vscode as any).LanguageModelThinkingPart(part.text, `reasoner-${Date.now()}`);
+                progress.report(thinkingPart);
+              } catch {
+                // Fallback: report as text with markers
+                progress.report(new vscode.LanguageModelTextPart(`\n[reasoning]${part.text}[/reasoning]\n`));
+              }
             }
             break;
           case 'step-finish':

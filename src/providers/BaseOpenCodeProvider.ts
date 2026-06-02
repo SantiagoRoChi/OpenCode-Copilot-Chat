@@ -627,7 +627,14 @@ async provideLanguageModelChatResponse(
         if (reasonerOutputs.length > 0) {
           const full = reasonerOutputs.join('');
           reasonerOutputs.length = 0;
-          progress.report(new vscode.LanguageModelTextPart(`\n[reasoning]${full}[/reasoning]\n`));
+          // Use ThinkingPart for collapsible reasoning blocks
+          try {
+            const thinkingPart = new (vscode as any).LanguageModelThinkingPart(full, `reasoner-${reporter.requestId}-${Date.now()}`);
+            progress.report(thinkingPart);
+          } catch {
+            // Fallback if LanguageModelThinkingPart not available
+            progress.report(new vscode.LanguageModelTextPart(`\n[reasoning]${full}[/reasoning]\n`));
+          }
         }
       },
       reportToolCall: (id, name, args) =>

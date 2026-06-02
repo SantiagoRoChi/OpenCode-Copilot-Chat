@@ -95,6 +95,14 @@
         "configuration": {}
       }
     ],
+    "languageModelTools": [
+      {
+        "name": "opencode_subagent",
+        "displayName": "OpenCode Subagent",
+        "toolReferenceName": "opencode_subagent",
+        "description": "Execute a subagent task using an OpenCode provider. Delegates to the first available OpenCode provider (Free, Go, Zen, or Server)."
+      }
+    ],
     "commands": [
       {
         "command": "opencode-zen.configureZen",

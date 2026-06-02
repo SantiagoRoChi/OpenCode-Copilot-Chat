@@ -10,6 +10,7 @@ import { OpenCodeServerProvider } from './providers/OpenCodeServerProvider';
 import { MultiServerManager, initMultiServerManager } from './client/multiServerManager';
 import { OpenCodeTreeProvider } from './treeview/openCodeTreeProvider';
 import { initModelRegistry, getRegistrySize } from './client/modelRegistry';
+import { OpenCodeSubagentTool } from './tools/subagentTool';
 import { randomUUID } from 'crypto';
 
 let freeProvider: OpenCodeFreeProvider;
@@ -124,6 +125,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.lm.registerLanguageModelChatProvider('opencode-free', freeProvider),
     vscode.lm.registerLanguageModelChatProvider('opencode-go', goProvider),
     vscode.lm.registerLanguageModelChatProvider('opencode-zen', zenProvider),
+  );
+
+  // Register subagent tool and wire up providers
+  const subagentTool = new OpenCodeSubagentTool();
+  OpenCodeSubagentTool.registerProvider('opencode-free', freeProvider);
+  OpenCodeSubagentTool.registerProvider('opencode-go', goProvider);
+  OpenCodeSubagentTool.registerProvider('opencode-zen', zenProvider);
+  context.subscriptions.push(
+    vscode.lm.registerTool(OpenCodeSubagentTool.toolName, subagentTool)
   );
 
   statusBar = new StatusBarManager(() => zenProvider.getStatusSnapshot());

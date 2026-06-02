@@ -354,16 +354,36 @@ async provideLanguageModelChatResponse(
 
       const stream = this.client.streamChatCompletion(request, this.apiKey, this.endpoint, abortController.signal);
 
-      const reporter = this.createStreamReporter(requestId, sessionId, progress, reasonerSteps, (usage) => {
-        capturedUsage = usage;
-      });
+      const reporter: StreamReporter = {
+        requestId,
+        sessionId,
+        reportText: (text) => {
+          this.outputChannel.appendLine(`[${this.outputChannelName}] TEXT(${text.length}): "${text.slice(0, 80)}..."`);
+          progress.report(new vscode.LanguageModelTextPart(text));
+        },
+        reportThinking: (text) => {
+          reasonerSteps.push({ stepId: `r-${requestId}-${reasonerSteps.length}`, label: 'Reasoning', startedAt: Date.now() });
+        },
+        reportThinkingDone: () => {},
+        reportToolCall: (id, name, args) => {
+          this.outputChannel.appendLine(`[${this.outputChannelName}] TOOL: ${name}`);
+          progress.report(new vscode.LanguageModelToolCallPart(id, name, args));
+        },
+        reportUsage: (usage) => {
+          capturedUsage = { prompt: usage.prompt_tokens, completion: usage.completion_tokens, total: usage.total_tokens };
+        },
+        reportReasonerStep: () => {},
+        reportThinkingBlock: () => {},
+      };
 
+      this.outputChannel.appendLine(`[${this.outputChannelName}] Starting stream...`);
       await streamResponse({
         chunks: stream,
         reporter,
         isCancelled: () => token.isCancellationRequested,
         resolveToolCallArgs: (tc) => resolveToolCallArgs(tc, schemas),
       });
+      this.outputChannel.appendLine(`[${this.outputChannelName}] Stream complete`);
 
       const meta: RequestMeta = {
         requestId,

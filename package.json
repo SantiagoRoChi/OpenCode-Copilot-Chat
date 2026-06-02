@@ -99,8 +99,22 @@
       {
         "name": "opencode_subagent",
         "displayName": "OpenCode Subagent",
+        "modelDescription": "Execute a subagent task using an OpenCode provider. Delegates to the first available OpenCode provider (Free, Go, Zen, or Server).",
         "toolReferenceName": "opencode_subagent",
-        "description": "Execute a subagent task using an OpenCode provider. Delegates to the first available OpenCode provider (Free, Go, Zen, or Server)."
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "What to execute — can include commands or task descriptions"
+            },
+            "description": {
+              "type": "string",
+              "description": "User-visible description shown while the tool runs"
+            }
+          },
+          "required": ["query", "description"]
+        }
       }
     ],
     "commands": [

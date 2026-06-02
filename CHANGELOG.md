@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.1.0] - 2026-06-02
+
+### Fixed
+- **Server provider session API**: Correct request format for OpenCode server
+  - `model` must be `{ providerID, modelID }` object (not string)
+  - `providerID` comes from server's actual provider data (e.g., `"opencode"`)
+  - Session API only accepts `model` and `parts` — no tools, temperature, etc.
+  - Filter user/assistant messages only (ignore system/tool messages)
+
 ## [3.0.0] - 2026-06-02
 
 ### BREAKING CHANGES

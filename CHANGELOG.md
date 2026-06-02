@@ -1,5 +1,44 @@
 # Changelog
 
+## [3.0.0] - 2026-06-02
+
+### BREAKING CHANGES
+- **models.dev API integration**: Model capabilities (context size, pricing, vision, reasoning) now fetched live from `https://models.dev/api.json` instead of hardcoded metadata
+- **Server provider rewrite**: OpenCode Server now uses session-based API (`POST /session` + `POST /session/:id/message`) instead of non-existent `/chat/completions` endpoint
+- **Single server provider**: All connected servers register under one `opencode-server` vendor instead of one per server
+
+### Added
+- **Live model registry**: `modelRegistry.ts` fetches from models.dev on activation with 30-minute cache
+- **40+ Zen models + 16 Go models** with real context sizes, pricing, and capabilities
+- **Pricing in tooltips**: hover over any model shows `In: $X/M · Out: $Y/M · Cache: $Z/M`
+- **Server provider models**: Local servers now appear in Language Models view with correct capabilities
+- **ThinkingEffort configuration**: Reasoning models show `configurationSchema` for low/medium/high
+- **Partial model ID matching**: Handles prefixed IDs (e.g., `opencode/deepseek-v4-flash`)
+- **Debug logging**: Detailed SSE parsing logs in Output panel for troubleshooting
+
+### Fixed
+- **Image detection too aggressive**: Was matching ANY message part with `mimeType` as image, causing "Image input not supported" for all models. Now only detects actual `LanguageModelImagePart` and `LanguageModelDataPart` with image/* mime types
+- **Tool schema validation**: Filters out tools with empty/undefined schemas that cause 400 errors from strict providers (MiniMax, etc.)
+- **Server provider auth**: `buildHeaders()` made public, auth headers properly sent
+- **Server provider streamResponse**: Fixed ReadableStream vs ReadableStreamDefaultController mismatch
+- **Server provider model registration**: Models now appear in Language Models view after registration
+- **models.dev data loading**: Now blocking (`await`) before provider registration so data is available when VS Code queries models
+
+### Removed
+- Anthropic Messages adapter (`anthropicAdapter.ts`) — all models use `/chat/completions` via OpenCode routing
+- OpenAI Responses adapter (`openaiResponsesAdapter.ts`) — all models use `/chat/completions` via OpenCode routing
+- `@vscode-elements/elements` dependency — not usable in webviews
+
+## [2.4.0] - 2026-06-02
+
+### Added
+- SDD task specs for multi-provider architecture (8 tasks)
+- `.specs/` directory with task definitions and dependency graph
+
+### Changed
+- TreeView sidebar with Dashboard + Config sections
+- Model registry with fallback static data
+
 ## [2.3.3] - 2026-06-02
 
 ### Fixed

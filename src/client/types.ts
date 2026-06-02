@@ -93,6 +93,25 @@ export interface TokenUsage {
   total: number;
 }
 
+export interface ReasonerStep {
+  stepId: string;
+  label: string;
+  startedAt: number;
+  endedAt?: number;
+  tokens?: number;
+}
+
+export interface RequestMeta {
+  requestId: string;
+  sessionId: string;
+  parentRequestId?: string;
+  reasonerSteps: ReasonerStep[];
+  modelId: string;
+  modelName: string;
+  startedAt: number;
+  completedAt?: number;
+}
+
 export type ConnectionState = 'ok' | 'error' | 'noModels' | 'unknown';
 
 export interface StatusSnapshot {

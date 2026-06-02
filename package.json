@@ -2,7 +2,7 @@
   "name": "opencode-zen-copilot",
   "displayName": "OpenCode Zen for Copilot",
   "description": "Access OpenCode Zen models in GitHub Copilot Chat — free models included",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",

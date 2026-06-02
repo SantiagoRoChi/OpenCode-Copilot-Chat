@@ -16,6 +16,8 @@ import {
   LastRequest,
   ToolDefinition,
   ConnectionState,
+  RequestMeta,
+  ReasonerStep,
 } from '../client/types';
 import { SecretStorage } from '../config/secretStorage';
 import { loadConfig } from '../config/settings';
@@ -69,7 +71,7 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
     totalTokens: { prompt: 0, completion: 0, total: 0 },
   };
   protected lastRequest?: LastRequest;
-
+  protected readonly providerSessionId: string;
   private readonly _onDidChangeLanguageModelChatInformation = new vscode.EventEmitter<void>();
   readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
   private readonly _onDidChangeRequestState = new vscode.EventEmitter<RequestStateEvent>();
@@ -85,6 +87,7 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
     this.client = new OpenCodeClient();
     this.connector = new OpenCodeConnector(this.outputChannel);
     this.usageTracker = new UsageTracker();
+    this.providerSessionId = `${providerType}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   }
 
   abstract get vendor(): string;
@@ -235,11 +238,16 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken
   ): Promise<void> {
-    this.outputChannel.appendLine(
-      `${this.outputChannelName} request: model=${model.id}, tools=${options.tools?.length ?? 0}`
-    );
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const sessionId = this.providerSessionId;
     const modelName = this.modelInfoMap.get(model.id)?.name ?? model.id;
+
+    this.outputChannel.appendLine(
+      `${this.outputChannelName} request: id=${requestId} model=${model.id} session=${sessionId.slice(0,12)}…`
+    );
     this._onDidChangeRequestState.fire({ kind: 'start', modelId: model.id, modelName });
+
+    const reasonerSteps: ReasonerStep[] = [];
 
     try {
       const openaiMessages = this.convertAllMessages(messages);
@@ -286,7 +294,7 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
       token.onCancellationRequested(() => abortSignal.abort());
       const stream = this.client.streamChatCompletion(request, this.apiKey, this.endpoint, abortSignal.signal);
 
-      const reporter = this.createStreamReporter(progress, (usage) => {
+      const reporter = this.createStreamReporter(requestId, sessionId, progress, reasonerSteps, (usage) => {
         capturedUsage = usage;
       });
 
@@ -297,7 +305,17 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
         resolveToolCallArgs: (tc) => resolveToolCallArgs(tc, schemas),
       });
 
-      this.recordCompletedRequest(model.id, modelName, capturedUsage);
+      const meta: RequestMeta = {
+        requestId,
+        sessionId,
+        modelId: model.id,
+        modelName,
+        startedAt: Date.now() - stats.totalContentLength,
+        completedAt: Date.now(),
+        reasonerSteps,
+      };
+
+      this.recordCompletedRequest(requestId, sessionId, model.id, modelName, capturedUsage, meta);
       this._onDidChangeRequestState.fire({
         kind: 'complete',
         modelId: model.id,
@@ -478,16 +496,17 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
   }
 
   private createStreamReporter(
+    requestId: string,
+    sessionId: string,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    reasonerSteps: ReasonerStep[],
     onUsage?: (usage: TokenUsage) => void
   ): StreamReporter {
     return {
+      requestId,
+      sessionId,
       reportText: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
-      reportThinking: (text) => {
-        // Render thinking content as plain text with subtle visual prefix
-        // (no <think> tags, no HTML - just clean text)
-        progress.report(new vscode.LanguageModelTextPart(text));
-      },
+      reportThinking: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
       reportThinkingDone: () => { /* no-op */ },
       reportToolCall: (id, name, args) =>
         progress.report(new vscode.LanguageModelToolCallPart(id, name, args)),
@@ -500,10 +519,20 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
         const payload = new TextEncoder().encode(JSON.stringify(usage));
         progress.report(new vscode.LanguageModelDataPart(payload, 'usage'));
       },
+      reportReasonerStep: (stepId, label, tokens) => {
+        reasonerSteps.push({ stepId, label, startedAt: Date.now(), tokens });
+      },
     };
   }
 
-  private recordCompletedRequest(modelId: string, modelName: string, usage?: TokenUsage): void {
+  private recordCompletedRequest(
+    requestId: string,
+    sessionId: string,
+    modelId: string,
+    modelName: string,
+    usage?: TokenUsage,
+    meta?: RequestMeta
+  ): void {
     this.sessionStats = {
       requestCount: this.sessionStats.requestCount + 1,
       totalTokens: {
@@ -515,10 +544,14 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
     this.lastRequest = { modelId, modelName, completedAt: Date.now(), usage };
 
     this.usageTracker.recordRequest(
+      requestId,
+      sessionId,
       modelId,
       modelName,
       this.providerType,
-      usage ?? { prompt: 0, completion: 0, total: 0 }
+      usage ?? { prompt: 0, completion: 0, total: 0 },
+      undefined,
+      meta
     );
   }
 }

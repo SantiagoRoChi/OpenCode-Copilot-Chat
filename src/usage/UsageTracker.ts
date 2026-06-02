@@ -1,13 +1,16 @@
 import * as vscode from 'vscode';
-import { TokenUsage, SessionStats, ModelSummary } from '../client/types';
+import { TokenUsage, RequestMeta } from '../client/types';
 
 export interface UsageRecord {
+  requestId: string;
+  sessionId: string;
   timestamp: number;
   modelId: string;
   modelName: string;
   provider: string;
   usage: TokenUsage;
   requestDuration?: number;
+  meta?: RequestMeta;
 }
 
 export interface UsageStats {
@@ -24,20 +27,41 @@ export class UsageTracker {
   readonly onDidChangeUsage = this._onDidChangeUsage.event;
 
   recordRequest(
+    requestId: string,
+    sessionId: string,
     modelId: string,
     modelName: string,
     provider: string,
     usage: TokenUsage,
-    duration?: number
+    duration?: number,
+    meta?: RequestMeta
   ): void {
-    this.records.push({
-      timestamp: Date.now(),
-      modelId,
-      modelName,
-      provider,
-      usage,
-      requestDuration: duration,
-    });
+    const existing = this.records.findIndex(r => r.requestId === requestId);
+    if (existing >= 0) {
+      this.records[existing] = {
+        timestamp: Date.now(),
+        requestId,
+        sessionId,
+        modelId,
+        modelName,
+        provider,
+        usage,
+        requestDuration: duration,
+        meta,
+      };
+    } else {
+      this.records.push({
+        timestamp: Date.now(),
+        requestId,
+        sessionId,
+        modelId,
+        modelName,
+        provider,
+        usage,
+        requestDuration: duration,
+        meta,
+      });
+    }
     this._onDidChangeUsage.fire(this.getStats());
   }
 
@@ -51,7 +75,6 @@ export class UsageTracker {
       totalTokens.completion += record.usage.completion;
       totalTokens.total += record.usage.total;
 
-      // By model
       const modelStats = byModel.get(record.modelId) || { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
       modelStats.requests++;
       modelStats.tokens.prompt += record.usage.prompt;
@@ -59,7 +82,6 @@ export class UsageTracker {
       modelStats.tokens.total += record.usage.total;
       byModel.set(record.modelId, modelStats);
 
-      // By provider
       const providerStats = byProvider.get(record.provider) || { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
       providerStats.requests++;
       providerStats.tokens.prompt += record.usage.prompt;
@@ -75,6 +97,22 @@ export class UsageTracker {
       byProvider,
       history: [...this.records],
     };
+  }
+
+  getSessions(): { sessionId: string; records: UsageRecord[]; tokens: TokenUsage }[] {
+    const map = new Map<string, { sessionId: string; records: UsageRecord[]; tokens: TokenUsage }>();
+    for (const record of this.records) {
+      let session = map.get(record.sessionId);
+      if (!session) {
+        session = { sessionId: record.sessionId, records: [], tokens: { prompt: 0, completion: 0, total: 0 } };
+        map.set(record.sessionId, session);
+      }
+      session.records.push(record);
+      session.tokens.prompt += record.usage.prompt;
+      session.tokens.completion += record.usage.completion;
+      session.tokens.total += record.usage.total;
+    }
+    return Array.from(map.values()).sort((a, b) => b.records[0].timestamp - a.records[0].timestamp);
   }
 
   clear(): void {
@@ -94,7 +132,6 @@ export function formatUsageOutput(stats: UsageStats): string {
   lines.push('╚════════════════════════════════════════════════════════════╝');
   lines.push('');
 
-  // Summary
   lines.push('📊 SUMMARY');
   lines.push('─────────────────────────────────────────────────────────────');
   lines.push(`  Total Requests:  ${stats.totalRequests}`);
@@ -103,7 +140,6 @@ export function formatUsageOutput(stats: UsageStats): string {
   lines.push(`    └─ Completion: ${stats.totalTokens.completion.toLocaleString()}`);
   lines.push('');
 
-  // By Provider
   if (stats.byProvider.size > 0) {
     lines.push('🏢 BY PROVIDER');
     lines.push('─────────────────────────────────────────────────────────────');
@@ -115,15 +151,36 @@ export function formatUsageOutput(stats: UsageStats): string {
     lines.push('');
   }
 
-  // By Model
+  if (stats.history.length > 0) {
+    lines.push('🔀 BY SESSION');
+    lines.push('─────────────────────────────────────────────────────────────');
+    const sessionMap = new Map<string, { sid: string; count: number; tokens: TokenUsage }>();
+    for (const record of stats.history) {
+      let s = sessionMap.get(record.sessionId);
+      if (!s) {
+        s = { sid: record.sessionId, count: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
+        sessionMap.set(record.sessionId, s);
+      }
+      s.count++;
+      s.tokens.prompt += record.usage.prompt;
+      s.tokens.completion += record.usage.completion;
+      s.tokens.total += record.usage.total;
+    }
+    const sorted = Array.from(sessionMap.values()).sort((a, b) => b.tokens.total - a.tokens.total);
+    for (const s of sorted) {
+      lines.push(`  Session ${s.sid.slice(0, 8)}…: ${s.count} req · ${s.tokens.total.toLocaleString()} tok`);
+    }
+    lines.push('');
+  }
+
   if (stats.byModel.size > 0) {
     lines.push('🤖 BY MODEL');
     lines.push('─────────────────────────────────────────────────────────────');
     const sortedModels = Array.from(stats.byModel.entries())
       .sort((a, b) => b[1].tokens.total - a[1].tokens.total);
-    
+
     for (const [modelId, data] of sortedModels) {
-      const pct = stats.totalTokens.total > 0 
+      const pct = stats.totalTokens.total > 0
         ? ((data.tokens.total / stats.totalTokens.total) * 100).toFixed(1)
         : '0.0';
       lines.push(`  ${modelId}:`);
@@ -132,15 +189,15 @@ export function formatUsageOutput(stats: UsageStats): string {
     lines.push('');
   }
 
-  // Recent History
   if (stats.history.length > 0) {
     lines.push('📝 RECENT HISTORY (last 10)');
     lines.push('─────────────────────────────────────────────────────────────');
     const recent = stats.history.slice(-10).reverse();
     for (const record of recent) {
       const time = new Date(record.timestamp).toLocaleTimeString();
+      const sid = record.sessionId.slice(0, 8);
       const duration = record.requestDuration ? ` (${record.requestDuration}ms)` : '';
-      lines.push(`  ${time} | ${record.modelName} | ${record.usage.total.toLocaleString()} tokens${duration}`);
+      lines.push(`  ${time} | sid:${sid} | ${record.modelName} | ${record.usage.total.toLocaleString()} tok${duration}`);
     }
   }
 

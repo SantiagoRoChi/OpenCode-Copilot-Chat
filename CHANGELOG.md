@@ -1,9 +1,15 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [2.1.0] - 2026-06-02
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Changed
+- **Sessions and request tracking**: every request now has a unique `requestId` and belongs to a `sessionId`. Tokens reported for the same requestId are replaced (not accumulated), fixing the token overcount bug where the API reports total tokens per session, not per message
+- **Reasoner steps**: streaming now tracks `reasoner_step` events so the provider collects reasoning steps (label, id, timestamps) per request
+- **Usage tracker keyed by requestId**: `recordRequest(requestId, ...)` finds existing records by requestId and replaces them instead of appending duplicates
+
+### Fixed
+- Thinking content no longer renders as HTML — `reportThinking` sends `LanguageModelTextPart` directly to progress (no more <think> literal tags)
+- Tokens no longer summed incorrectly across requests — each request's total is reported once and replaced if the same requestId fires again
 
 ## [2.0.1] - 2026-06-01
 

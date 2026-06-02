@@ -23,17 +23,36 @@ export class OpenCodeClient {
   }
 
   async getUsage(apiKey: string, endpoint: ApiEndpoint, signal?: AbortSignal): Promise<ApiUsageResponse | undefined> {
+    const url = `${endpoint}/usage`;
     try {
-      const response = await fetch(`${endpoint}/usage`, {
+      const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         signal,
       });
-      if (!response.ok) return undefined;
-      return (await response.json()) as ApiUsageResponse;
-    } catch {
+      const status = response.status;
+      const text = await response.text().catch(() => '');
+      if (status === 404 || text === '') {
+        console.log(`[OpenCodeClient] /usage returned ${status} — ${text || 'empty body'}`);
+        return undefined;
+      }
+      if (!response.ok) {
+        console.log(`[OpenCodeClient] /usage HTTP ${status}: ${text}`);
+        return undefined;
+      }
+      let parsed: any;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        console.log(`[OpenCodeClient] /usage non-JSON response: ${text.slice(0, 200)}`);
+        return undefined;
+      }
+      console.log(`[OpenCodeClient] /usage response keys: ${Object.keys(parsed).join(', ')}`);
+      return parsed as ApiUsageResponse;
+    } catch (err) {
+      console.log(`[OpenCodeClient] /usage exception: ${err}`);
       return undefined;
     }
   }

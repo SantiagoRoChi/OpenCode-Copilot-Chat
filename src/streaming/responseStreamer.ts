@@ -49,6 +49,7 @@ export async function streamResponse(options: StreamOptions): Promise<StreamResu
   let totalToolCalls = 0;
   let isReasoning = false;
   let reasonerStepCount = 0;
+  let firstChunk = true;
 
   const toolCallBuffers = new Map<number, { id: string; name: string; arguments: string }>();
 
@@ -58,6 +59,11 @@ export async function streamResponse(options: StreamOptions): Promise<StreamResu
 
       const { done, value } = await reader.read();
       if (done) break;
+
+      if (firstChunk && value.id) {
+        console.log(`[Stream] first chunk: id=${value.id} model=${value.model}`);
+        firstChunk = false;
+      }
 
       for (const choice of value.choices) {
         const delta = choice.delta;
@@ -69,11 +75,13 @@ export async function streamResponse(options: StreamOptions): Promise<StreamResu
             const stepId = `reasoner-${reporter.requestId}-${reasonerStepCount}`;
             reporter.reportReasonerStep(stepId, `Reasoning #${reasonerStepCount}`);
             reporter.reportThinkingBlock('');
+            console.log(`[Stream] reasoning start step=${reasonerStepCount}`);
           }
           reporter.reportThinking(delta.reasoning_content);
         } else if (isReasoning) {
           isReasoning = false;
           reporter.reportThinkingDone();
+          console.log(`[Stream] reasoning done`);
         }
 
         if (delta.content !== undefined && delta.content !== null) {
@@ -110,6 +118,7 @@ export async function streamResponse(options: StreamOptions): Promise<StreamResu
       }
 
       if (value.usage) {
+        console.log(`[Stream] usage: prompt=${value.usage.prompt_tokens} completion=${value.usage.completion_tokens} total=${value.usage.total_tokens}`);
         reporter.reportUsage(value.usage);
       }
     }

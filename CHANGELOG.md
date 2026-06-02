@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.3.2] - 2026-06-02
+
+### Changed
+- Added debug logging to `getUsage`: logs URL, HTTP status, response body (or empty/JSON parse error) so we can see exactly what the API returns
+- Added debug logging to `streamResponse`: logs first chunk id/model, reasoning start/done, usage tokens
+
+### Fixed
+- Config tree now uses correct command IDs (was using `opencodeConfigureZen` instead of `opencode-zen.configureZen`)
+- Global tree shows pending/error/ok state per provider instead of hanging
+- `fetchApiUsage` has 8s timeout to prevent tree from hanging forever
+
 ## [2.3.0] - 2026-06-02
 
 ### Added

@@ -31,6 +31,7 @@ export interface ModelRegistration extends ModelEndpoint, ModelCapabilities {
 export interface RegistryEntry {
   chatEndpoint: string;
   apiFormat: ApiFormat;
+  npmPackage: string;  // @ai-sdk/anthropic, @ai-sdk/openai, etc.
   name: string;
   family: string;
   maxInputTokens: number;

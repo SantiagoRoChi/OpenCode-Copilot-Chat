@@ -104,7 +104,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   for (const conn of serverManager.getConnectedList()) {
-    const vendorId = `opencode-server-${conn.config.id}`;
+    const vendorId = 'opencode-server';
     const existing = serverProviders.find(p => (p as any).vendor === vendorId);
     if (!existing) {
       const provider = new OpenCodeServerProvider(

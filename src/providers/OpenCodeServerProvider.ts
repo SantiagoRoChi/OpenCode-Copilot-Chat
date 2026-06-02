@@ -63,7 +63,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
   readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
   readonly onDidChangeRequestState = this._onDidChangeRequestState.event;
 
-  get vendor(): string { return `opencode-server-${this.serverId}`; }
+  get vendor(): string { return 'opencode-server'; }
   get displayName(): string { return `OpenCode ${this.serverName}`; }
 
   constructor(
@@ -107,15 +107,22 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
   ): Promise<vscode.LanguageModelChatInformation[]> {
     const now = Date.now();
     if (now - this.lastFetch > MODEL_CACHE_TTL || this.models.length === 0) {
+      this.outputChannel.appendLine(`[ServerProvider] Fetching models from ${this.baseUrl}...`);
       await this.fetchModels();
+      this.outputChannel.appendLine(`[ServerProvider] Got ${this.models.length} models`);
     }
     return this.models;
   }
 
   async fetchModels(): Promise<void> {
     try {
+      this.outputChannel.appendLine(`[ServerProvider] Calling getProviders()...`);
       const providers = await this.serverClient.getProviders();
-      if (!providers) return;
+      if (!providers) {
+        this.outputChannel.appendLine(`[ServerProvider] getProviders() returned null/undefined`);
+        return;
+      }
+      this.outputChannel.appendLine(`[ServerProvider] got ${providers.all?.length || 0} providers, ${providers.connected?.length || 0} connected`);
 
       const allModels: vscode.LanguageModelChatInformation[] = [];
       const connectedIds = providers.connected || [];
@@ -125,6 +132,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
         if (!isConnected) continue;
 
         const modelEntries = Object.entries(provider.models || {}) as [string, any][];
+        this.outputChannel.appendLine(`[ServerProvider] Provider "${provider.name}" has ${modelEntries.length} models, connected=${isConnected}`);
         for (const [modelId, modelData] of modelEntries) {
           const info: ServerModelInfo = {
             id: modelId,
@@ -147,7 +155,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
             id: modelId,
             name: label,
             description: `${provider.name} · ${info.maxInputTokens.toLocaleString()} in · ${info.maxOutputTokens.toLocaleString()} out`,
-            vendor: this.vendor,
+            vendor: 'opencode-server',
             family: provider.name,
             version: modelData.version || '1',
             maxInputTokens: info.maxInputTokens,
@@ -162,8 +170,9 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
 
       this.models = allModels;
       this.lastFetch = Date.now();
+      this.outputChannel.appendLine(`[ServerProvider] Total models registered: ${allModels.length}`);
     } catch (err) {
-      this.outputChannel.appendLine(`Failed to fetch models: ${err}`);
+      this.outputChannel.appendLine(`[ServerProvider] ERROR: ${err}`);
     }
   }
 

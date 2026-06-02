@@ -18,6 +18,7 @@ import {
   buildInputText,
 } from '../utils/tokenEstimate';
 import { loadConfig } from '../config/settings';
+import { getModelCapabilities } from '../client/modelRegistry';
 
 export type ServerRequestStateEvent =
   | { kind: 'start'; modelId: string; modelName: string }
@@ -123,7 +124,6 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
         }
 
         const connectedIds = providers.connected || [];
-        let serverModelCount = 0;
 
         for (const provider of providers.all || []) {
           const isConnected = provider.connected || connectedIds.includes(provider.id);
@@ -132,33 +132,40 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
           const modelEntries = Object.entries(provider.models || {}) as [string, any][];
           for (const [modelId, modelData] of modelEntries) {
             const uniqueId = `${serverId}:${modelId}`;
+
+            // Get real capabilities from models.dev registry
+            const caps = getModelCapabilities(modelId);
+            const maxInput = modelData.maxTokens || caps.maxInputTokens;
+            const maxOutput = modelData.maxOutputTokens || caps.maxOutputTokens;
+
             const info: ServerModelInfo = {
               id: modelId,
-              name: modelData.name || modelId.split('/').pop() || modelId,
-              family: provider.name,
-              maxInputTokens: modelData.maxTokens || TOKEN_CONSTANTS.DEFAULT_CONTEXT_TOKENS,
-              maxOutputTokens: modelData.maxOutputTokens || TOKEN_CONSTANTS.DEFAULT_OUTPUT_TOKENS,
-              contextLabel: provider.name,
-              capabilityLabels: [],
+              name: caps.name !== modelId ? caps.name : (modelData.name || modelId.split('/').pop() || modelId),
+              family: caps.family,
+              maxInputTokens: maxInput,
+              maxOutputTokens: maxOutput,
+              contextLabel: `${Math.round(maxInput / 1000)}K`,
+              capabilityLabels: [
+                ...(caps.toolCalling ? ['Tools'] : []),
+                ...(caps.imageInput ? ['Vision'] : []),
+                ...(caps.reasoning ? ['Reasoning'] : []),
+              ],
             };
-
-            if (modelData.supportsImages) info.capabilityLabels.push('Vision');
-            if (modelData.supportsTools) info.capabilityLabels.push('Tools');
 
             this.modelInfoMap.set(uniqueId, info);
 
             allModels.push({
               id: uniqueId,
               name: `${info.name} (${entry.serverName})`,
-              description: `${provider.name} · ${info.maxInputTokens.toLocaleString()} in`,
+              description: `${provider.name} · ${info.contextLabel} in · ${Math.round(maxOutput / 1000)}K out`,
               vendor: this.vendor,
               family: provider.name,
               version: modelData.version || '1',
-              maxInputTokens: info.maxInputTokens,
-              maxOutputTokens: info.maxOutputTokens,
+              maxInputTokens: maxInput,
+              maxOutputTokens: maxOutput,
               capabilities: {
-                imageInput: !!modelData.supportsImages,
-                toolCalling: !!modelData.supportsTools,
+                imageInput: caps.imageInput,
+                toolCalling: caps.toolCalling,
               },
             });
             serverModelCount++;

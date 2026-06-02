@@ -307,143 +307,63 @@ async provideLanguageModelChatResponse(
     const reasonerSteps: ReasonerStep[] = [];
 
     try {
-      const endpoint = getModelEndpoint(this.providerType, model.id);
       const { tools, schemas } = this.buildToolsConfig(options);
       const hasTools = tools !== undefined && tools.length > 0;
-      const temperature = hasTools ? 0 : DEFAULT_TEMPERATURE;
 
       let capturedUsage: TokenUsage | undefined;
       const abortController = new AbortController();
       token.onCancellationRequested(() => abortController.abort());
 
-      if (endpoint.apiFormat === 'anthropic') {
-        const { toAnthropicMessages, streamAnthropicResponse } = await import('../streaming/anthropicAdapter');
-        const request = toAnthropicMessages(messages, model.id);
-        if (hasTools) {
-          request.tools = tools!.map(t => ({
-            name: t.function.name,
-            description: t.function.description || '',
-            input_schema: t.function.parameters || { type: 'object', properties: {} },
-          }));
-        }
-        const response = await fetch(`${this.endpoint}${endpoint.chatEndpoint}`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify(request),
-          signal: abortController.signal,
-        });
-        if (!response.ok) {
-          const text = await response.text().catch(() => '');
-          throw new Error(`API request failed: HTTP ${response.status} — ${text}`);
-        }
-        await streamAnthropicResponse(response, {
-          onText: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
-          onThinking: (text) => reasonerSteps.push({ stepId: `reasoner-${requestId}-${reasonerSteps.length}`, label: 'Reasoning', startedAt: Date.now() }),
-          onThinkingDone: () => { /* no-op */ },
-          onToolCall: (id, name, args) => progress.report(new vscode.LanguageModelToolCallPart(id, name, args)),
-          onUsage: (usage) => {
-            capturedUsage = {
-              prompt: usage.input_tokens,
-              completion: usage.output_tokens,
-              total: usage.input_tokens + usage.output_tokens,
-            };
-          },
-          onError: (err) => { throw err; },
-          onDone: () => { /* no-op */ },
-        }, abortController.signal);
-      } else if (endpoint.apiFormat === 'openai') {
-        const { toResponsesRequest, streamResponsesResponse } = await import('../streaming/openaiResponsesAdapter');
-        const request = toResponsesRequest(messages, model.id, model.maxOutputTokens || 32000);
-        if (hasTools) {
-          request.tools = tools!.map(t => ({
-            type: 'function' as const,
-            name: t.function.name,
-            description: t.function.description,
-            parameters: t.function.parameters as Record<string, unknown> | undefined,
-          }));
-        }
-        const response = await fetch(`${this.endpoint}${endpoint.chatEndpoint}`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(request),
-          signal: abortController.signal,
-        });
-        if (!response.ok) {
-          const text = await response.text().catch(() => '');
-          throw new Error(`API request failed: HTTP ${response.status} — ${text}`);
-        }
-        await streamResponsesResponse(response, {
-          onText: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
-          onThinking: (text) => reasonerSteps.push({ stepId: `reasoner-${requestId}-${reasonerSteps.length}`, label: 'Reasoning', startedAt: Date.now() }),
-          onThinkingDone: () => { /* no-op */ },
-          onToolCall: (id, name, args) => progress.report(new vscode.LanguageModelToolCallPart(id, name, args)),
-          onUsage: (usage) => {
-            capturedUsage = {
-              prompt: usage.input_tokens,
-              completion: usage.output_tokens,
-              total: usage.total_tokens,
-            };
-          },
-          onError: (err) => { throw err; },
-          onDone: () => { /* no-op */ },
-        }, abortController.signal);
-      } else {
-        // openai-compatible: use existing convertAllMessages + streamChatCompletion
-        const openaiMessages = this.convertAllMessages(messages);
-        const modelMaxContext = model.maxInputTokens || TOKEN_CONSTANTS.DEFAULT_CONTEXT_TOKENS;
-        const configuredMaxOutput = model.maxOutputTokens || TOKEN_CONSTANTS.DEFAULT_OUTPUT_TOKENS;
-        const toolsSerializedLength = options.tools ? JSON.stringify(options.tools).length : 0;
+      // ALL models use /chat/completions — OpenCode API handles routing internally
+      const openaiMessages = this.convertAllMessages(messages);
+      const modelMaxContext = model.maxInputTokens || TOKEN_CONSTANTS.DEFAULT_CONTEXT_TOKENS;
+      const configuredMaxOutput = model.maxOutputTokens || TOKEN_CONSTANTS.DEFAULT_OUTPUT_TOKENS;
+      const toolsSerializedLength = options.tools ? JSON.stringify(options.tools).length : 0;
 
-        const maxInputTokens = calculateMaxInputTokens({
-          modelMaxContext,
-          configuredMaxOutput,
-          toolsSerializedLength,
-        });
+      const maxInputTokens = calculateMaxInputTokens({
+        modelMaxContext,
+        configuredMaxOutput,
+        toolsSerializedLength,
+      });
 
-        const truncatedMessages = truncateMessagesToFit(
-          openaiMessages as unknown as Record<string, unknown>[],
-          maxInputTokens,
-          (msg) => this.outputChannel.appendLine(msg)
-        ) as unknown as ChatMessage[];
+      const truncatedMessages = truncateMessagesToFit(
+        openaiMessages as unknown as Record<string, unknown>[],
+        maxInputTokens,
+        (msg) => this.outputChannel.appendLine(msg)
+      ) as unknown as ChatMessage[];
 
-        const inputText = buildInputText(truncatedMessages as unknown as Record<string, unknown>[]);
-        const estimatedInputTokens = estimateTextTokens(inputText);
-        const toolsOverhead = Math.ceil(toolsSerializedLength / TOKEN_CONSTANTS.CHARS_PER_TOKEN);
-        const safeMaxOutputTokens = calculateSafeMaxOutputTokens({
-          estimatedInputTokens,
-          toolsOverhead,
-          modelMaxContext,
-          configuredMaxOutput,
-        });
+      const inputText = buildInputText(truncatedMessages as unknown as Record<string, unknown>[]);
+      const estimatedInputTokens = estimateTextTokens(inputText);
+      const toolsOverhead = Math.ceil(toolsSerializedLength / TOKEN_CONSTANTS.CHARS_PER_TOKEN);
+      const safeMaxOutputTokens = calculateSafeMaxOutputTokens({
+        estimatedInputTokens,
+        toolsOverhead,
+        modelMaxContext,
+        configuredMaxOutput,
+      });
 
-        const request: ChatCompletionRequest = {
-          model: model.id,
-          messages: truncatedMessages,
-          max_tokens: safeMaxOutputTokens,
-          temperature,
-          ...(hasTools && { tools, tool_choice: this.mapToolChoice(options.toolMode) }),
-        };
+      const temperature = hasTools ? 0 : DEFAULT_TEMPERATURE;
 
-        const stream = this.client.streamChatCompletion(request, this.apiKey, this.endpoint, abortController.signal);
+      const request: ChatCompletionRequest = {
+        model: model.id,
+        messages: truncatedMessages,
+        max_tokens: safeMaxOutputTokens,
+        temperature,
+        ...(hasTools && { tools, tool_choice: this.mapToolChoice(options.toolMode) }),
+      };
 
-        const reporter = this.createStreamReporter(requestId, sessionId, progress, reasonerSteps, (usage) => {
-          capturedUsage = usage;
-        });
+      const stream = this.client.streamChatCompletion(request, this.apiKey, this.endpoint, abortController.signal);
 
-        await streamResponse({
-          chunks: stream,
-          reporter,
-          isCancelled: () => token.isCancellationRequested,
-          resolveToolCallArgs: (tc) => resolveToolCallArgs(tc, schemas),
-        });
-      }
+      const reporter = this.createStreamReporter(requestId, sessionId, progress, reasonerSteps, (usage) => {
+        capturedUsage = usage;
+      });
+
+      await streamResponse({
+        chunks: stream,
+        reporter,
+        isCancelled: () => token.isCancellationRequested,
+        resolveToolCallArgs: (tc) => resolveToolCallArgs(tc, schemas),
+      });
 
       const meta: RequestMeta = {
         requestId,

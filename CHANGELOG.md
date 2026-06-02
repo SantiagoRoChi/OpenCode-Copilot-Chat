@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-06-01
+
+### Fixed
+- Strip `<think>` tags from streaming content so they no longer render as literal HTML
+- Auto-refresh models when API key is configured (set, changed, or cleared)
+- Status bar button now opens the usage sidebar (not the output channel)
+- Models endpoint queried even without API key (fails gracefully if auth required)
+
+### Changed
+- Webview redesigned with collapsible tree structure and VSCode-style aesthetics
+- Each model entry expands to show requests, prompt, completion breakdown
+- Each recent request expands to show full details
+- Usage stats bars with percentages
+- New command `OpenCode Zen: Show Output Log` for terminal-style stats view
+
 ## [2.0.0] - 2026-06-01
 
 ### BREAKING CHANGES

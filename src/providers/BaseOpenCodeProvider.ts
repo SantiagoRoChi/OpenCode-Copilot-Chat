@@ -109,6 +109,12 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
       await this.secretStorage.setGoKey(key);
     }
     this.invalidateCache();
+    // Fire change event so VS Code re-queries models
+    this._onDidChangeLanguageModelChatInformation.fire();
+    // Trigger immediate fetch in background
+    void this.fetchModels().then(() => {
+      this._onDidChangeLanguageModelChatInformation.fire();
+    });
   }
 
   getApiKey(): string {
@@ -121,13 +127,13 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
   }
 
   private async fetchModels(): Promise<vscode.LanguageModelChatInformation[]> {
-    if (!this.apiKey) {
-      this.outputChannel.appendLine(`${this.outputChannelName}: no API key, skipping model fetch`);
-      return [];
-    }
+    this.outputChannel.appendLine(
+      `Fetching models from ${this.endpoint} (key ${this.apiKey ? 'set' : 'not set'})...`
+    );
 
     try {
-      this.outputChannel.appendLine(`Fetching models from ${this.endpoint}...`);
+      // Always try to fetch. Some endpoints allow unauthenticated listing.
+      // If fetch fails, fall back to no models.
       const response = await this.client.listModels(this.apiKey, this.endpoint);
       const allModels = response.data || [];
       const filteredModels = this.filterModels(allModels);
@@ -148,6 +154,8 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.outputChannel.appendLine(`Error fetching models: ${msg}`);
+      this.models = [];
+      this.lastFetch = Date.now();
       return [];
     }
   }
@@ -475,7 +483,11 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
   ): StreamReporter {
     return {
       reportText: (text) => progress.report(new vscode.LanguageModelTextPart(text)),
-      reportThinking: (text) => progress.report(new vscode.LanguageModelTextPart(`<think>${text}</think>`)),
+      reportThinking: (text) => {
+        // Render thinking content as plain text with subtle visual prefix
+        // (no <think> tags, no HTML - just clean text)
+        progress.report(new vscode.LanguageModelTextPart(text));
+      },
       reportThinkingDone: () => { /* no-op */ },
       reportToolCall: (id, name, args) =>
         progress.report(new vscode.LanguageModelToolCallPart(id, name, args)),

@@ -180,6 +180,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('opencode-zen.showUsage', () => {
+      // Open the usage webview in the sidebar
+      vscode.commands.executeCommand('workbench.view.opencode-zen-usage');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('opencode-zen.showOutputLog', () => {
       const stats = aggregateUsageStats([
         zenProvider.getUsageTracker().getStats(),
         goProvider.getUsageTracker().getStats(),

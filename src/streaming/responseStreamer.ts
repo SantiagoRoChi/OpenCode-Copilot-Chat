@@ -22,6 +22,22 @@ export interface StreamOptions {
   resolveToolCallArgs: (toolCall: ToolCall) => Record<string, unknown>;
 }
 
+/**
+ * Cleans think tags and other internal markers from text content.
+ * Some models (like MiMo) emit <think>...</think> blocks in the content stream.
+ * We strip these so the user only sees the final answer.
+ */
+export function cleanContentText(text: string): string {
+  if (!text) return text;
+  // Remove complete <think>...</think> blocks
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  // Remove incomplete <think>... at the end
+  cleaned = cleaned.replace(/<think>[\s\S]*$/gi, '');
+  // Remove standalone </think>
+  cleaned = cleaned.replace(/<\/think>/gi, '');
+  return cleaned;
+}
+
 export async function streamResponse(options: StreamOptions): Promise<StreamResult> {
   const { chunks, reporter, isCancelled, resolveToolCallArgs } = options;
   const reader = chunks.getReader();
@@ -58,11 +74,16 @@ export async function streamResponse(options: StreamOptions): Promise<StreamResu
           reporter.reportThinkingDone();
         }
 
-        // Handle text content
+        // Handle text content (clean think tags)
         if (delta.content !== undefined && delta.content !== null) {
-          totalContentLength += delta.content.length;
-          totalTextParts++;
-          reporter.reportText(delta.content);
+          const cleaned = cleanContentText(delta.content);
+          if (cleaned.length > 0) {
+            totalContentLength += cleaned.length;
+            totalTextParts++;
+            reporter.reportText(cleaned);
+          } else {
+            totalContentLength += delta.content.length;
+          }
         }
 
         // Handle tool calls

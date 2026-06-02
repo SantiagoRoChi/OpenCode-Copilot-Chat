@@ -312,17 +312,19 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
       const sessionId = sessionData.id;
       this.outputChannel.appendLine(`[${entry.serverName}] Session: ${sessionId}`);
 
-      // Send message using session API
+      // Send message using session API — model must be { providerID, modelID } object
       const messageUrl = `${entry.baseUrl}/session/${sessionId}/message`;
-      const requestBody = {
-        model: modelId,
-        parts: truncatedMessages.map(m => ({
-          type: 'text',
-          text: typeof m.content === 'string' ? m.content : m.content.map((c: any) => c.text || '').join(''),
-        })).filter((p: any) => p.text),
+      const textParts = truncatedMessages.map(m => ({
+        type: 'text',
+        text: typeof m.content === 'string' ? m.content : m.content.map((c: any) => c.text || '').join(''),
+      })).filter((p: any) => p.text);
+
+      const requestBody: any = {
+        model: { modelID: modelId },
+        parts: textParts,
       };
 
-      this.outputChannel.appendLine(`[${entry.serverName}] POST ${messageUrl}`);
+      this.outputChannel.appendLine(`[${entry.serverName}] POST ${messageUrl} model=${JSON.stringify(requestBody.model)} parts=${textParts.length}`);
       const messageRes = await fetch(messageUrl, {
         method: 'POST',
         headers,

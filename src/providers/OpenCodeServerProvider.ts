@@ -322,6 +322,8 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
         }))
         .filter((p: any) => p.text);
 
+      const serverModelId = modelId.split(':').pop() || modelId;
+
       const requestBody: any = {
         model: { providerID: info.family, modelID: serverModelId },
         parts: textParts,

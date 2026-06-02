@@ -2,12 +2,26 @@ import * as vscode from 'vscode';
 
 const ZEN_SECRET_KEY = 'opencode-zen.zenKey';
 const GO_SECRET_KEY = 'opencode-zen.goKey';
+const SERVER_CONFIGS_KEY = 'opencode-zen.serverConfigs';
+
+export interface ServerConfig {
+  id: string;
+  name: string;
+  url: string;
+  port: number;
+  username?: string;
+  password?: string;
+  enabled: boolean;
+  isLocal: boolean;
+}
 
 export class SecretStorage {
   private secrets: vscode.SecretStorage;
+  private state: vscode.Memento;
 
   constructor(context: vscode.ExtensionContext) {
     this.secrets = context.secrets;
+    this.state = context.workspaceState;
   }
 
   async getZenKey(): Promise<string> {
@@ -42,5 +56,45 @@ export class SecretStorage {
 
   async clearGoKey(): Promise<void> {
     await this.secrets.delete(GO_SECRET_KEY);
+  }
+
+  async getServerConfigs(): Promise<ServerConfig[]> {
+    const stored = this.state.get<string>(SERVER_CONFIGS_KEY);
+    if (!stored) return this.getDefaultLocalConfig();
+    try {
+      return JSON.parse(stored) as ServerConfig[];
+    } catch {
+      return this.getDefaultLocalConfig();
+    }
+  }
+
+  private getDefaultLocalConfig(): ServerConfig[] {
+    return [{
+      id: 'local-default',
+      name: 'Local OpenCode',
+      url: 'http://127.0.0.1',
+      port: 4096,
+      enabled: true,
+      isLocal: true,
+    }];
+  }
+
+  async setServerConfigs(configs: ServerConfig[]): Promise<void> {
+    await this.state.update(SERVER_CONFIGS_KEY, JSON.stringify(configs));
+  }
+
+  async getServerPassword(serverId: string): Promise<string> {
+    const key = `opencode-zen.serverpwd:${serverId}`;
+    const pwd = await this.secrets.get(key);
+    return pwd ?? '';
+  }
+
+  async setServerPassword(serverId: string, password: string): Promise<void> {
+    const key = `opencode-zen.serverpwd:${serverId}`;
+    if (password.trim().length === 0) {
+      await this.secrets.delete(key);
+    } else {
+      await this.secrets.store(key, password.trim());
+    }
   }
 }

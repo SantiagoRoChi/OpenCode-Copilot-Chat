@@ -2,7 +2,7 @@
   "name": "opencode-zen-copilot",
   "displayName": "OpenCode Zen for Copilot",
   "description": "Access OpenCode Zen models in GitHub Copilot Chat — free models included",
-  "version": "2.3.3",
+  "version": "2.4.0",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -127,18 +127,33 @@
         "category": "OpenCode Zen"
       },
       {
-        "command": "opencode-zen.showGlobal",
-        "title": "Show Global Usage",
-        "category": "OpenCode Zen"
-      },
-      {
-        "command": "opencode-zen.showConfig",
-        "title": "Show Configuration",
-        "category": "OpenCode Zen"
-      },
-      {
         "command": "opencode-zen.refreshGlobal",
         "title": "Refresh Global Usage",
+        "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.addServer",
+        "title": "Add Server",
+        "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.editServer",
+        "title": "Edit Server",
+        "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.removeServer",
+        "title": "Remove Server",
+        "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.launchServer",
+        "title": "Launch Server",
+        "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.refreshServers",
+        "title": "Refresh Servers",
         "category": "OpenCode Zen"
       }
     ],
@@ -154,19 +169,8 @@
     "views": {
       "opencode-zen-sidebar": [
         {
-          "id": "opencode-zen-session-tree",
-          "type": "tree",
-          "name": "Session"
-        },
-        {
-          "id": "opencode-zen-global-tree",
-          "type": "tree",
-          "name": "Global"
-        },
-        {
-          "id": "opencode-zen-config-tree",
-          "type": "tree",
-          "name": "Config"
+          "id": "opencode-zen-tree",
+          "name": "OpenCode Zen"
         }
       ]
     },
@@ -213,26 +217,16 @@
       }
     },
     "menus": {
-      "view/item/context": [
+      "view/title": [
         {
-          "view": "opencode-zen-config-tree",
-          "command": "opencode-zen.configureZen"
+          "view": "opencode-zen-dashboard",
+          "command": "opencode-zen.addServer",
+          "when": "view == opencode-zen-dashboard"
         },
         {
-          "view": "opencode-zen-config-tree",
-          "command": "opencode-zen.configureGo"
-        },
-        {
-          "view": "opencode-zen-config-tree",
-          "command": "opencode-zen.refreshAll"
-        },
-        {
-          "view": "opencode-zen-config-tree",
-          "command": "opencode-zen.clearUsage"
-        },
-        {
-          "view": "opencode-zen-global-tree",
-          "command": "opencode-zen.refreshGlobal"
+          "view": "opencode-zen-dashboard",
+          "command": "opencode-zen.refreshAll",
+          "when": "view == opencode-zen-dashboard"
         }
       ]
     }
@@ -244,5 +238,6 @@
     "esbuild": "^0.24.0",
     "sharp": "^0.34.5",
     "typescript": "^5.6.0"
-  }
+  },
+  "dependencies": {}
 }

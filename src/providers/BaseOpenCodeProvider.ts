@@ -231,13 +231,36 @@ export abstract class BaseOpenCodeProvider implements vscode.LanguageModelChatPr
     this._onDidChangeLanguageModelChatInformation.fire();
   }
 
-  async provideLanguageModelChatResponse(
+async provideLanguageModelChatResponse(
     model: vscode.LanguageModelChatInformation,
     messages: readonly vscode.LanguageModelChatMessage[],
     options: vscode.ProvideLanguageModelChatResponseOptions,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken
   ): Promise<void> {
+    let hasImages = false;
+    try {
+      hasImages = messages.some(msg =>
+        msg.content.some(part => {
+          try {
+            return part instanceof vscode.LanguageModelImagePart;
+          } catch {
+            return (part as any).mimeType !== undefined && (part as any).mimeType !== null;
+          }
+        })
+      );
+    } catch {
+      hasImages = false;
+    }
+
+    if (hasImages) {
+      this.outputChannel.appendLine(`ERROR: Image input not supported for model ${model.id}. Skipping request.`);
+      vscode.window.showWarningMessage(
+        `OpenCode ${this.displayName}: This model does not support image input.`
+      );
+      return;
+    }
+
     const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const sessionId = this.providerSessionId;
     const modelName = this.modelInfoMap.get(model.id)?.name ?? model.id;

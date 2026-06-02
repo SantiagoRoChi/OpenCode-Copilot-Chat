@@ -3,23 +3,23 @@ import { OpenCodeFreeProvider } from './providers/OpenCodeFreeProvider';
 import { OpenCodeGoProvider } from './providers/OpenCodeGoProvider';
 import { OpenCodeZenProvider } from './providers/OpenCodeZenProvider';
 import { StatusBarManager } from './status/statusBar';
-import { UsageTracker, UsageStats, formatUsageOutput } from './usage/UsageTracker';
-import { SessionTreeProvider } from './status/sessionTree';
-import { GlobalTreeProvider } from './status/globalTree';
-import { ConfigTreeProvider } from './status/configTree';
+import { formatUsageOutput } from './usage/UsageTracker';
 import { OpenCodeConnector } from './integration/opencodeConnector';
 import { SecretStorage } from './config/secretStorage';
-import { TokenUsage } from './client/types';
+import { OpenCodeServerProvider } from './providers/OpenCodeServerProvider';
+import { MultiServerManager, initMultiServerManager } from './client/multiServerManager';
+import { OpenCodeTreeProvider } from './treeview/openCodeTreeProvider';
+import { randomUUID } from 'crypto';
 
 let freeProvider: OpenCodeFreeProvider;
 let goProvider: OpenCodeGoProvider;
 let zenProvider: OpenCodeZenProvider;
 let statusBar: StatusBarManager;
-let sessionTree: SessionTreeProvider;
-let globalTree: GlobalTreeProvider;
-let configTree: ConfigTreeProvider;
+let treeProvider: OpenCodeTreeProvider;
 let connector: OpenCodeConnector;
 let secretStorage: SecretStorage;
+let serverManager: MultiServerManager;
+let serverProviders: OpenCodeServerProvider[] = [];
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   console.log('OpenCode Zen: activating...');
@@ -36,6 +36,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   connector = new OpenCodeConnector(zenProvider['outputChannel']);
   secretStorage = new SecretStorage(context);
+  serverManager = await initMultiServerManager(secretStorage);
+
   connector.watchAuthFile(context);
   context.subscriptions.push(connector);
 
@@ -72,10 +74,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           await goProvider.setApiKey(newKeys.goKey);
         }
         vscode.window.showInformationMessage('OpenCode Zen: New API keys loaded.');
-        void updateAllTrees();
+        void updateWebview();
       }
     })
   );
+
+  const connectedList = serverManager.getConnectedList();
+  const localConfigs = (await secretStorage.getServerConfigs()).filter(c => c.isLocal && c.enabled);
+  const localNotRunning = localConfigs.filter(c => !connectedList.some(conn => conn.config.id === c.id));
+
+  if (localNotRunning.length > 0) {
+    for (const localConfig of localNotRunning) {
+      const launched = await serverManager.launchServer(localConfig);
+      if (launched) {
+        vscode.window.showInformationMessage(`OpenCode local server launched on ${localConfig.url}:${localConfig.port}`).then();
+        break;
+      }
+    }
+    await serverManager.connectAll();
+  } else if (connectedList.length > 0) {
+    vscode.window.showInformationMessage(`OpenCode: ${connectedList.length} server(s) connected.`).then();
+  }
+
+  for (const conn of serverManager.getConnectedList()) {
+    const vendorId = `opencode-server-${conn.config.id}`;
+    const existing = serverProviders.find(p => (p as any).vendor === vendorId);
+    if (!existing) {
+      const provider = new OpenCodeServerProvider(
+        context,
+        conn.config.id,
+        conn.config.name,
+        conn.info.baseUrl,
+        conn.client
+      );
+      serverProviders.push(provider);
+      context.subscriptions.push(
+        vscode.lm.registerLanguageModelChatProvider(vendorId, provider)
+      );
+      context.subscriptions.push(provider);
+    }
+  }
 
   context.subscriptions.push(
     vscode.lm.registerLanguageModelChatProvider('opencode-free', freeProvider),
@@ -87,88 +125,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBar.show();
   context.subscriptions.push(statusBar);
 
-  sessionTree = new SessionTreeProvider();
-  globalTree = new GlobalTreeProvider();
-  configTree = new ConfigTreeProvider();
+  treeProvider = new OpenCodeTreeProvider();
 
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('opencode-zen-session-tree', sessionTree),
-    vscode.window.registerTreeDataProvider('opencode-zen-global-tree', globalTree),
-    vscode.window.registerTreeDataProvider('opencode-zen-config-tree', configTree),
+    vscode.window.registerTreeDataProvider('opencode-zen-tree', treeProvider)
   );
 
-  const updateAllTrees = async () => {
-    const [zenKey, goKey] = await Promise.all([
-      secretStorage.getZenKey(),
-      secretStorage.getGoKey(),
-    ]);
+  registerCommands(context);
 
-    const combined = aggregateUsageStats([
-      zenProvider.getUsageTracker().getStats(),
-      goProvider.getUsageTracker().getStats(),
-      freeProvider.getUsageTracker().getStats(),
-    ]);
+  const connectedCount = serverManager.getConnectedList().length;
+  if (connectedCount > 0) {
+    vscode.window.showInformationMessage(`OpenCode: ${connectedCount} server(s) connected.`).then();
+  }
 
-    sessionTree.update({
-      zenKey, goKey, sessionStats: combined,
-    });
+  const initialProbe = setTimeout(() => { void refreshStatusBar(); }, 2000);
+  context.subscriptions.push({ dispose: () => clearTimeout(initialProbe) });
 
-    configTree.update(zenKey, goKey);
+  void updateWebview();
+}
 
-    let zenStatus: 'pending' | 'error' | 'ok' | 'no-endpoint' = 'pending';
-    let goStatus: 'pending' | 'error' | 'ok' | 'no-endpoint' = 'pending';
-    let zenUsage: any;
-    let goUsage: any;
-
-    try {
-      const zu = await zenProvider.fetchApiUsage().catch(() => undefined);
-      const gu = await goProvider.fetchApiUsage().catch(() => undefined);
-      zenUsage = zu;
-      goUsage = gu;
-      zenStatus = 'ok';
-      goStatus = 'ok';
-    } catch {
-      zenStatus = 'error';
-      goStatus = 'error';
-    }
-
-    globalTree.update({
-      zenKey, goKey,
-      zenStatus, goStatus,
-      zenFamilies: zenProvider.getModelFamilies(),
-      goFamilies: goProvider.getModelFamilies(),
-      zenUsage: zenUsage || undefined,
-      goUsage: goUsage || undefined,
-    });
-  };
-
-  const onUsageChange = () => { void updateAllTrees(); };
-  zenProvider.getUsageTracker().onDidChangeUsage(onUsageChange);
-  goProvider.getUsageTracker().onDidChangeUsage(onUsageChange);
-  freeProvider.getUsageTracker().onDidChangeUsage(onUsageChange);
-
-  const refreshInterval = setInterval(() => { void updateAllTrees(); }, 30000);
-  context.subscriptions.push({ dispose: () => clearInterval(refreshInterval) });
-
-  void updateAllTrees();
-
-  const handleRequestState = (event: any) => {
-    switch (event.kind) {
-      case 'start': statusBar.setStreaming(event.modelId, event.modelName); break;
-      case 'complete': statusBar.setResponded(event.modelId, event.modelName); break;
-      case 'error': statusBar.setError(event.errorMessage); break;
-    }
-  };
-
-  context.subscriptions.push(
-    zenProvider.onDidChangeRequestState(handleRequestState),
-    goProvider.onDidChangeRequestState(handleRequestState),
-    freeProvider.onDidChangeRequestState(handleRequestState),
-    zenProvider.onDidChangeLanguageModelChatInformation(() => statusBar.refreshTooltip()),
-    goProvider.onDidChangeLanguageModelChatInformation(() => statusBar.refreshTooltip()),
-    freeProvider.onDidChangeLanguageModelChatInformation(() => statusBar.refreshTooltip()),
-  );
-
+function registerCommands(context: vscode.ExtensionContext): void {
   const configureZen = async () => {
     const apiKey = await vscode.window.showInputBox({
       title: 'OpenCode Zen — API Key',
@@ -180,7 +156,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await freeProvider.setApiKey(apiKey);
     await secretStorage.setZenKey(apiKey);
     vscode.window.showInformationMessage(apiKey ? 'OpenCode Zen: API key saved.' : 'OpenCode Zen: API key cleared.');
-    void updateAllTrees();
+    void updateWebview();
   };
 
   const configureGo = async () => {
@@ -193,14 +169,225 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await goProvider.setApiKey(apiKey);
     await secretStorage.setGoKey(apiKey);
     vscode.window.showInformationMessage(apiKey ? 'OpenCode Go: API key saved.' : 'OpenCode Go: API key cleared.');
-    void updateAllTrees();
+    void updateWebview();
+  };
+
+  const refreshAll = () => {
+    zenProvider.refreshModels();
+    goProvider.refreshModels();
+    freeProvider.refreshModels();
+    serverProviders.forEach(p => p.refreshModels());
+    vscode.window.showInformationMessage('OpenCode Zen: All models refreshed.');
+    void updateWebview();
+  };
+
+  const addServer = async () => {
+    const name = await vscode.window.showInputBox({
+      title: 'Server Name', prompt: 'Display name for this server', placeHolder: 'My OpenCode Server', ignoreFocusOut: true,
+    });
+    if (name === undefined) return;
+
+    const url = await vscode.window.showInputBox({
+      title: 'Server URL', prompt: 'Base URL (e.g. http://127.0.0.1)', placeHolder: 'http://127.0.0.1', ignoreFocusOut: true,
+    });
+    if (url === undefined) return;
+
+    const portStr = await vscode.window.showInputBox({
+      title: 'Port', prompt: 'Server port', placeHolder: '4096', ignoreFocusOut: true,
+    });
+    if (portStr === undefined) return;
+    const port = parseInt(portStr, 10) || 4096;
+
+    const username = await vscode.window.showInputBox({
+      title: 'Username (optional)', prompt: 'Basic auth username', placeHolder: '', ignoreFocusOut: true,
+    });
+
+    let password = '';
+    if (username) {
+      const pwd = await vscode.window.showInputBox({
+        title: 'Password', prompt: 'Basic auth password', password: true, placeHolder: '', ignoreFocusOut: true,
+      });
+      if (pwd !== undefined) password = pwd;
+    }
+
+    const newConfig = {
+      id: randomUUID(),
+      name,
+      url: url || 'http://127.0.0.1',
+      port,
+      username: username || undefined,
+      password: !!password,
+      enabled: true,
+      isLocal: url?.includes('127.0.0.1') || url?.includes('localhost'),
+    };
+
+    const configs = await secretStorage.getServerConfigs();
+    configs.push(newConfig as any);
+    await secretStorage.setServerConfigs(configs);
+
+    if (password) {
+      await secretStorage.setServerPassword(newConfig.id, password);
+    }
+
+    await serverManager.connectAll();
+    vscode.window.showInformationMessage(`Server "${name}" added.`);
+    void updateWebview();
+  };
+
+  const editServer = async (serverId?: string) => {
+    if (!serverId) {
+      const servers = await secretStorage.getServerConfigs();
+      if (servers.length === 0) {
+        vscode.window.showInformationMessage('No servers to edit.');
+        return;
+      }
+      const selected = await vscode.window.showQuickPick(
+        servers.map(s => ({ label: s.name, id: s.id })),
+        { placeHolder: 'Select server to edit' }
+      );
+      if (!selected) return;
+      serverId = (selected as any).id;
+    }
+
+    const configs = await secretStorage.getServerConfigs();
+    const config = configs.find(c => c.id === serverId);
+    if (!config) return;
+
+    const name = await vscode.window.showInputBox({
+      title: 'Server Name', prompt: 'Display name', value: config.name, ignoreFocusOut: true,
+    });
+    if (name === undefined) return;
+
+    const url = await vscode.window.showInputBox({
+      title: 'Server URL', prompt: 'Base URL', value: config.url, ignoreFocusOut: true,
+    });
+    if (url === undefined) return;
+
+    const portStr = await vscode.window.showInputBox({
+      title: 'Port', prompt: 'Server port', value: String(config.port), ignoreFocusOut: true,
+    });
+    if (portStr === undefined) return;
+    const port = parseInt(portStr, 10) || 4096;
+
+    const username = await vscode.window.showInputBox({
+      title: 'Username (optional)', prompt: 'Basic auth username', value: config.username || '', ignoreFocusOut: true,
+    });
+
+    let newPassword = '';
+    const currentPwd = config.password ? await secretStorage.getServerPassword(serverId!) : '';
+    const pwd = await vscode.window.showInputBox({
+      title: 'Password', prompt: 'Password (empty to keep current)', password: true, value: currentPwd, ignoreFocusOut: true,
+    });
+    if (pwd !== undefined) newPassword = pwd;
+
+    config.name = name;
+    config.url = url;
+    config.port = port;
+    config.username = username || undefined;
+    config.password = !!newPassword || !!currentPwd;
+    config.isLocal = url?.includes('127.0.0.1') || url?.includes('localhost');
+
+    await secretStorage.setServerConfigs(configs);
+    if (newPassword) {
+      await secretStorage.setServerPassword(serverId!, newPassword);
+    }
+
+    await serverManager.connectAll();
+    vscode.window.showInformationMessage(`Server "${name}" updated.`);
+    void updateWebview();
+  };
+
+  const removeServer = async (serverId?: string) => {
+    if (!serverId) {
+      const servers = await secretStorage.getServerConfigs();
+      if (servers.length === 0) {
+        vscode.window.showInformationMessage('No servers to remove.');
+        return;
+      }
+      const selected = await vscode.window.showQuickPick(
+        servers.map(s => ({ label: s.name, id: s.id })),
+        { placeHolder: 'Select server to remove' }
+      );
+      if (!selected) return;
+      serverId = (selected as any).id;
+    }
+
+    const configs = await secretStorage.getServerConfigs();
+    const config = configs.find(c => c.id === serverId);
+    if (!config) return;
+
+    const choice = await vscode.window.showWarningMessage(
+      `Remove server "${config.name}"? This cannot be undone.`,
+      'Remove', 'Cancel'
+    );
+    if (choice !== 'Remove') return;
+
+    const filtered = configs.filter(c => c.id !== serverId);
+    await secretStorage.setServerConfigs(filtered);
+    await secretStorage.setServerPassword(serverId!, '');
+
+    await serverManager.connectAll();
+    vscode.window.showInformationMessage(`Server "${config.name}" removed.`);
+    void updateWebview();
+  };
+
+  const launchServer = async (serverId?: string) => {
+    if (!serverId) {
+      const configs = await secretStorage.getServerConfigs();
+      const offline = configs.filter(c => !serverManager.getConnectedList().some(conn => conn.config.id === c.id));
+      if (offline.length === 0) {
+        vscode.window.showInformationMessage('All servers are online or no servers configured.');
+        return;
+      }
+      const selected = await vscode.window.showQuickPick(
+        offline.map(s => ({ label: s.name, id: s.id })),
+        { placeHolder: 'Select server to launch' }
+      );
+      if (!selected) return;
+      serverId = (selected as any).id;
+    }
+
+    const configs = await secretStorage.getServerConfigs();
+    const config = configs.find(c => c.id === serverId);
+    if (!config) return;
+
+    const launched = await serverManager.launchServer(config);
+    if (launched) {
+      vscode.window.showInformationMessage(`Server "${config.name}" launched.`);
+    } else {
+      vscode.window.showWarningMessage(`Could not launch "${config.name}". Make sure opencode is in your PATH.`);
+    }
+    void updateWebview();
   };
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('opencode-zen.configureZen', configureZen),
+    vscode.commands.registerCommand('opencode-zen.configureGo', configureGo),
+    vscode.commands.registerCommand('opencode-zen.refreshAll', refreshAll),
+    vscode.commands.registerCommand('opencode-zen.refreshGlobal', async () => {
+      zenProvider.refreshModels();
+      goProvider.refreshModels();
+      await updateWebview();
+      vscode.window.showInformationMessage('Global usage refreshed.');
+    }),
+    vscode.commands.registerCommand('opencode-zen.clearUsage', () => {
+      zenProvider.getUsageTracker().clear();
+      goProvider.getUsageTracker().clear();
+      freeProvider.getUsageTracker().clear();
+      serverProviders.forEach(p => p.getUsageTracker().clear());
+      vscode.window.showInformationMessage('OpenCode Zen: Usage stats cleared.');
+      void updateWebview();
+    }),
+    vscode.commands.registerCommand('opencode-zen.addServer', addServer),
+    vscode.commands.registerCommand('opencode-zen.editServer', (_, serverId?: string) => editServer(serverId)),
+    vscode.commands.registerCommand('opencode-zen.removeServer', (_, serverId?: string) => removeServer(serverId)),
+    vscode.commands.registerCommand('opencode-zen.launchServer', (_, serverId?: string) => launchServer(serverId)),
+    vscode.commands.registerCommand('opencode-zen.refreshServers', () => {
+      void serverManager.connectAll();
+      void updateWebview();
+      vscode.window.showInformationMessage('Servers refreshed.');
+    }),
     vscode.commands.registerCommand('opencode-zen.showOutput', () => zenProvider.showOutput()),
-    vscode.commands.registerCommand('opencode-zen.showUsage', () => vscode.commands.executeCommand('workbench.view.opencode-zen-sidebar')),
-    vscode.commands.registerCommand('opencode-zen.showGlobal', () => vscode.commands.executeCommand('workbench.view.opencode-zen-global')),
-    vscode.commands.registerCommand('opencode-zen.showConfig', () => vscode.commands.executeCommand('workbench.view.opencode-zen-config')),
     vscode.commands.registerCommand('opencode-zen.showOutputLog', () => {
       const stats = aggregateUsageStats([
         zenProvider.getUsageTracker().getStats(),
@@ -210,62 +397,76 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       zenProvider.showOutput();
       zenProvider.appendOutput(formatUsageOutput(stats));
     }),
-    vscode.commands.registerCommand('opencode-zen.configureZen', configureZen),
-    vscode.commands.registerCommand('opencode-zen.configureGo', configureGo),
-    vscode.commands.registerCommand('opencode-zen.refreshAll', () => {
-      zenProvider.refreshModels();
-      goProvider.refreshModels();
-      freeProvider.refreshModels();
-      vscode.window.showInformationMessage('OpenCode Zen: All models refreshed.');
-    }),
-    vscode.commands.registerCommand('opencode-zen.refreshTree', () => sessionTree.refresh()),
-    vscode.commands.registerCommand('opencode-zen.refreshGlobal', async () => {
-      zenProvider.refreshModels();
-      goProvider.refreshModels();
-      await updateAllTrees();
-      vscode.window.showInformationMessage('Global usage refreshed.');
-    }),
-    vscode.commands.registerCommand('opencode-zen.clearUsage', () => {
-      zenProvider.getUsageTracker().clear();
-      goProvider.getUsageTracker().clear();
-      freeProvider.getUsageTracker().clear();
-      vscode.window.showInformationMessage('OpenCode Zen: Usage stats cleared.');
-      void updateAllTrees();
-    }),
   );
-
-  const initialProbe = setTimeout(() => { void refreshStatusBar(); }, 2000);
-  context.subscriptions.push({ dispose: () => clearTimeout(initialProbe) });
 }
 
-function aggregateUsageStats(statsList: UsageStats[]): UsageStats {
-  const totalRequests = statsList.reduce((s, x) => s + x.totalRequests, 0);
+async function updateWebview(): Promise<void> {
+  const [zenKeyFromStorage, goKeyFromStorage] = await Promise.all([
+    secretStorage.getZenKey(),
+    secretStorage.getGoKey(),
+  ]);
+
+  const zenKey = zenProvider.getApiKey() || zenKeyFromStorage;
+  const goKey = goProvider.getApiKey() || goKeyFromStorage;
+
+  const connectedServers: any[] = [];
+  for (const conn of serverManager.getConnectedList()) {
+    const connectedProviders = await conn.client.getProvidersInfo();
+    const allModels: string[] = [];
+
+    for (const p of connectedProviders) {
+      if (p.connected) {
+        allModels.push(...Object.keys(p.models || {}));
+      }
+    }
+
+    connectedServers.push({
+      id: conn.config.id,
+      name: conn.config.name,
+      url: conn.config.url,
+      port: conn.config.port,
+      version: conn.info.version,
+      available: conn.info.available,
+      models: [...new Set(allModels)],
+      providerCount: connectedProviders.filter((p: any) => p.connected).length,
+    });
+  }
+
+  const configs = await secretStorage.getServerConfigs();
+  const allServers = configs.map(c => {
+    const conn = connectedServers.find((s: any) => s.id === c.id);
+    return {
+      id: c.id,
+      name: c.name,
+      url: c.url,
+      port: c.port,
+      version: conn?.version,
+      available: conn?.available || false,
+      models: conn?.models || [],
+      providerCount: conn?.providerCount || 0,
+    };
+  });
+
+  const state: DashboardState = {
+    servers: allServers,
+    zenKey,
+    goKey,
+    zenFamilies: zenProvider.getModelFamilies(),
+    goFamilies: goProvider.getModelFamilies(),
+    zenStats: zenProvider.getUsageTracker().getStats(),
+    goStats: goProvider.getUsageTracker().getStats(),
+  };
+
+  treeProvider.refresh(state);
+}
+
+function aggregateUsageStats(statsList: any[]): any {
+  const totalRequests = statsList.reduce((s: number, x: any) => s + x.totalRequests, 0);
   const totalTokens = statsList.reduce(
-    (acc, st) => ({ prompt: acc.prompt + st.totalTokens.prompt, completion: acc.completion + st.totalTokens.completion, total: acc.total + st.totalTokens.total }),
+    (acc: any, st: any) => ({ prompt: acc.prompt + st.totalTokens.prompt, completion: acc.completion + st.totalTokens.completion, total: acc.total + st.totalTokens.total }),
     { prompt: 0, completion: 0, total: 0 }
   );
-  const byModel: Record<string, { requests: number; tokens: TokenUsage }> = {};
-  const byProvider: Record<string, { requests: number; tokens: TokenUsage }> = {};
-  const history: any[] = [];
-  for (const s of statsList) {
-    for (const r of s.history) history.push(r);
-    for (const [k, v] of Object.entries(s.byModel)) {
-      if (!byModel[k]) byModel[k] = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
-      byModel[k].requests += v.requests;
-      byModel[k].tokens.prompt += v.tokens.prompt;
-      byModel[k].tokens.completion += v.tokens.completion;
-      byModel[k].tokens.total += v.tokens.total;
-    }
-    for (const [k, v] of Object.entries(s.byProvider)) {
-      if (!byProvider[k]) byProvider[k] = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 } };
-      byProvider[k].requests += v.requests;
-      byProvider[k].tokens.prompt += v.tokens.prompt;
-      byProvider[k].tokens.completion += v.tokens.completion;
-      byProvider[k].tokens.total += v.tokens.total;
-    }
-  }
-  history.sort((a, b) => b.timestamp - a.timestamp);
-  return { totalRequests, totalTokens, byModel, byProvider, history };
+  return { totalRequests, totalTokens };
 }
 
 async function refreshStatusBar(): Promise<void> {

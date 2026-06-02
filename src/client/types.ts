@@ -34,6 +34,45 @@ export interface ApiQuota {
   period?: 'hour' | 'day' | 'week' | 'month' | 'year';
 }
 
+export interface ApiUserResponse {
+  id: string;
+  email: string;
+  url: string;
+  active_org_id?: string;
+}
+
+export interface ApiOrg {
+  id: string;
+  name: string;
+}
+
+export interface ApiOrgsResponse {
+  orgs: ApiOrg[];
+}
+
+export interface ConsoleOrg {
+  accountID: string;
+  accountEmail: string;
+  accountUrl: string;
+  orgID: string;
+  orgName: string;
+  active: boolean;
+}
+
+export interface ApiConsoleOrgsResponse {
+  orgs: ConsoleOrg[];
+}
+
+export interface ApiConsoleResponse {
+  accountID: string;
+  accountEmail: string;
+  accountUrl: string;
+  orgID: string;
+  orgName: string;
+  providerIDs: string[];
+  active: boolean;
+}
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | ContentPart[];

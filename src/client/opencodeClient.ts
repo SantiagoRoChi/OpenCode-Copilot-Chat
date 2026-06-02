@@ -1,6 +1,10 @@
 import {
   ApiModelsResponse,
   ApiUsageResponse,
+  ApiUserResponse,
+  ApiOrgsResponse,
+  ApiConsoleOrgsResponse,
+  ApiConsoleResponse,
   ChatCompletionRequest,
   ChatCompletionChunk,
 } from './types';
@@ -53,6 +57,86 @@ export class OpenCodeClient {
       return parsed as ApiUsageResponse;
     } catch (err) {
       console.log(`[OpenCodeClient] /usage exception: ${err}`);
+      return undefined;
+    }
+  }
+
+  async getUser(apiKey: string, endpoint: ApiEndpoint, signal?: AbortSignal): Promise<ApiUserResponse | undefined> {
+    try {
+      const response = await fetch(`${endpoint}/api/user`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal,
+      });
+      if (!response.ok) {
+        console.log(`[OpenCodeClient] /api/user HTTP ${response.status}`);
+        return undefined;
+      }
+      return (await response.json()) as ApiUserResponse;
+    } catch (err) {
+      console.log(`[OpenCodeClient] /api/user exception: ${err}`);
+      return undefined;
+    }
+  }
+
+  async getOrgs(apiKey: string, endpoint: ApiEndpoint, signal?: AbortSignal): Promise<ApiOrgsResponse | undefined> {
+    try {
+      const response = await fetch(`${endpoint}/api/orgs`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal,
+      });
+      if (!response.ok) {
+        console.log(`[OpenCodeClient] /api/orgs HTTP ${response.status}`);
+        return undefined;
+      }
+      return (await response.json()) as ApiOrgsResponse;
+    } catch (err) {
+      console.log(`[OpenCodeClient] /api/orgs exception: ${err}`);
+      return undefined;
+    }
+  }
+
+  async getConsoleOrgs(apiKey: string, endpoint: ApiEndpoint, signal?: AbortSignal): Promise<ApiConsoleOrgsResponse | undefined> {
+    try {
+      const response = await fetch(`${endpoint}/experimental/console/orgs`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal,
+      });
+      if (!response.ok) {
+        console.log(`[OpenCodeClient] /experimental/console/orgs HTTP ${response.status}`);
+        return undefined;
+      }
+      return (await response.json()) as ApiConsoleOrgsResponse;
+    } catch (err) {
+      console.log(`[OpenCodeClient] /experimental/console/orgs exception: ${err}`);
+      return undefined;
+    }
+  }
+
+  async getConsole(apiKey: string, endpoint: ApiEndpoint, signal?: AbortSignal): Promise<ApiConsoleResponse | undefined> {
+    try {
+      const response = await fetch(`${endpoint}/experimental/console`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal,
+      });
+      if (!response.ok) {
+        console.log(`[OpenCodeClient] /experimental/console HTTP ${response.status}`);
+        return undefined;
+      }
+      return (await response.json()) as ApiConsoleResponse;
+    } catch (err) {
+      console.log(`[OpenCodeClient] /experimental/console exception: ${err}`);
       return undefined;
     }
   }

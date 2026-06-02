@@ -86,13 +86,16 @@ interface ModelsDevModel {
   id: string;
   name: string;
   family?: string;
-  attachment?: boolean;      // vision/image input
+  attachment?: boolean;
   reasoning?: boolean;
   tool_call?: boolean;
-  limit?: { context?: number; output?: number };
+  temperature?: boolean;
+  interleaved?: boolean | { field: string };
+  limit?: { context?: number; output?: number; input?: number };
   cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
-  status?: string;
   modalities?: { input?: string[]; output?: string[] };
+  status?: string;
+  structured_output?: boolean;
 }
 
 interface ModelsDevProvider {
@@ -145,6 +148,9 @@ async function fetchModelsDev(): Promise<void> {
 function modelsDevToRegistry(id: string, model: ModelsDevModel): RegistryEntry {
   const fmt = inferApiFormat(id);
 
+  // Vision = modalities.input includes "image" OR "pdf"
+  const hasVision = model.modalities?.input?.some(m => m === 'image' || m === 'pdf') ?? false;
+
   return {
     chatEndpoint: fmt.endpoint,
     apiFormat: fmt.apiFormat,
@@ -152,10 +158,11 @@ function modelsDevToRegistry(id: string, model: ModelsDevModel): RegistryEntry {
     family: inferFamily(id),
     maxInputTokens: model.limit?.context ?? DEFAULT_INPUT,
     maxOutputTokens: model.limit?.output ?? DEFAULT_OUTPUT,
-    imageInput: model.attachment ?? false,
+    imageInput: model.attachment ?? hasVision,  // Use attachment OR modalities
     toolCalling: model.tool_call ?? true,
     reasoning: model.reasoning ?? false,
     thinkingEffort: model.reasoning ? 'high' : undefined,
+    // Cost is already in $/M tokens from models.dev
     pricePerMillionInput: model.cost?.input,
     pricePerMillionOutput: model.cost?.output,
     pricePerMillionCacheRead: model.cost?.cache_read,

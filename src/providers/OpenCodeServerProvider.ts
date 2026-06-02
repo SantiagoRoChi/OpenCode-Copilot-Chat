@@ -154,7 +154,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
 
             this.modelInfoMap.set(uniqueId, info);
 
-            allModels.push({
+            const chatInfo: vscode.LanguageModelChatInformation = {
               id: uniqueId,
               name: `${info.name} (${entry.serverName})`,
               description: `${provider.name} · ${info.contextLabel} in · ${Math.round(maxOutput / 1000)}K out`,
@@ -167,7 +167,22 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
                 imageInput: caps.imageInput,
                 toolCalling: caps.toolCalling,
               },
-            });
+            };
+
+            if (caps.reasoning) {
+              (chatInfo as any).configurationSchema = {
+                properties: {
+                  reasoningEffort: {
+                    type: 'string',
+                    enum: ['low', 'medium', 'high'],
+                    default: 'medium',
+                    description: 'Controls reasoning depth.',
+                  },
+                },
+              };
+            }
+
+            allModels.push(chatInfo);
             serverModelCount++;
           }
         }

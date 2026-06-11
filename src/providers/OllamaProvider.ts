@@ -83,7 +83,27 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
     if (Date.now() - this.lastFetch > 5 * 60 * 1000 || this.models.length === 0) {
       await this.fetchModels();
     }
+    // If no models found but servers are configured, show placeholder
+    if (this.models.length === 0 && this.modelServerMap.size > 0) {
+      return this.getPlaceholderModels();
+    }
     return this.models;
+  }
+
+  private getPlaceholderModels(): vscode.LanguageModelChatInformation[] {
+    const placeholders: vscode.LanguageModelChatInformation[] = [];
+    for (const [serverId, entry] of this.modelServerMap) {
+      placeholders.push({
+        id: `${serverId}:offline`,
+        name: `⚠️ ${entry.serverName} (offline)`,
+        family: 'ollama',
+        version: '1',
+        maxInputTokens: 0,
+        maxOutputTokens: 0,
+        capabilities: {},
+      });
+    }
+    return placeholders;
   }
 
   async fetchModels(): Promise<void> {

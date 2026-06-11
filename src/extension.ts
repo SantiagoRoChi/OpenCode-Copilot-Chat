@@ -131,12 +131,40 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   context.subscriptions.push(lmStudioProvider);
 
+  // Auto-connect to local LM Studio (default port 1234)
+  try {
+    const lmStudioUrl = vscode.workspace.getConfiguration('lmstudio').get<string>('baseUrl') || 'http://localhost:1234';
+    const lmStudioHealth = await fetch(`${lmStudioUrl}/v1/models`, { signal: AbortSignal.timeout(3000) });
+    if (lmStudioHealth.ok) {
+      lmStudioProvider.addServer('local', 'Local LM Studio', lmStudioUrl);
+      console.log(`+ Providers: LM Studio connected at ${lmStudioUrl}`);
+    } else {
+      console.log(`+ Providers: LM Studio not available at ${lmStudioUrl}`);
+    }
+  } catch {
+    console.log('+ Providers: LM Studio not running locally');
+  }
+
   // Register Ollama provider
   ollamaProvider = new OllamaProvider();
   context.subscriptions.push(
     vscode.lm.registerLanguageModelChatProvider('ollama', ollamaProvider)
   );
   context.subscriptions.push(ollamaProvider);
+
+  // Auto-connect to local Ollama (default port 11434)
+  try {
+    const ollamaUrl = vscode.workspace.getConfiguration('ollama').get<string>('baseUrl') || 'http://localhost:11434';
+    const ollamaHealth = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
+    if (ollamaHealth.ok) {
+      ollamaProvider.addServer('local', 'Local Ollama', ollamaUrl);
+      console.log(`+ Providers: Ollama connected at ${ollamaUrl}`);
+    } else {
+      console.log(`+ Providers: Ollama not available at ${ollamaUrl}`);
+    }
+  } catch {
+    console.log('+ Providers: Ollama not running locally');
+  }
 
   context.subscriptions.push(
     vscode.lm.registerLanguageModelChatProvider('opencode-free', freeProvider),
@@ -423,44 +451,53 @@ function registerCommands(context: vscode.ExtensionContext): void {
     void updateWebview();
   };
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-zen.configureZen', configureZen),
-    vscode.commands.registerCommand('opencode-zen.configureGo', configureGo),
-    vscode.commands.registerCommand('opencode-zen.refreshAll', refreshAll),
-    vscode.commands.registerCommand('opencode-zen.refreshGlobal', async () => {
-      zenProvider.refreshModels();
-      goProvider.refreshModels();
-      await updateWebview();
-      vscode.window.showInformationMessage('Global usage refreshed.');
-    }),
-    vscode.commands.registerCommand('opencode-zen.clearUsage', () => {
-      zenProvider.getUsageTracker().clear();
-      goProvider.getUsageTracker().clear();
-      freeProvider.getUsageTracker().clear();
-      serverProvider?.getUsageTracker().clear();
-      vscode.window.showInformationMessage('OpenCode Zen: Usage stats cleared.');
-      void updateWebview();
-    }),
-    vscode.commands.registerCommand('opencode-zen.addServer', addServer),
-    vscode.commands.registerCommand('opencode-zen.editServer', (_, serverId?: string) => editServer(serverId)),
-    vscode.commands.registerCommand('opencode-zen.removeServer', (_, serverId?: string) => removeServer(serverId)),
-    vscode.commands.registerCommand('opencode-zen.launchServer', (_, serverId?: string) => launchServer(serverId)),
-    vscode.commands.registerCommand('opencode-zen.refreshServers', () => {
-      void serverManager.connectAll();
-      void updateWebview();
-      vscode.window.showInformationMessage('Servers refreshed.');
-    }),
-    vscode.commands.registerCommand('opencode-zen.showOutput', () => zenProvider.showOutput()),
-    vscode.commands.registerCommand('opencode-zen.showOutputLog', () => {
-      const stats = aggregateUsageStats([
-        zenProvider.getUsageTracker().getStats(),
-        goProvider.getUsageTracker().getStats(),
-        freeProvider.getUsageTracker().getStats(),
-      ]);
-      zenProvider.showOutput();
-      zenProvider.appendOutput(formatUsageOutput(stats));
-    }),
-  );
+  const registeredCommands = new Set<string>();
+  const safeRegister = (command: string, callback: (...args: any[]) => any) => {
+    if (registeredCommands.has(command)) {
+      console.log(`Command ${command} already registered in this session, skipping`);
+      return;
+    }
+    registeredCommands.add(command);
+    const disposable = vscode.commands.registerCommand(command, callback);
+    context.subscriptions.push(disposable);
+  };
+
+  safeRegister('opencode-zen.configureZen', configureZen);
+  safeRegister('opencode-zen.configureGo', configureGo);
+  safeRegister('opencode-zen.refreshAll', refreshAll);
+  safeRegister('opencode-zen.refreshGlobal', async () => {
+    zenProvider.refreshModels();
+    goProvider.refreshModels();
+    await updateWebview();
+    vscode.window.showInformationMessage('Global usage refreshed.');
+  });
+  safeRegister('opencode-zen.clearUsage', () => {
+    zenProvider.getUsageTracker().clear();
+    goProvider.getUsageTracker().clear();
+    freeProvider.getUsageTracker().clear();
+    serverProvider?.getUsageTracker().clear();
+    vscode.window.showInformationMessage('OpenCode Zen: Usage stats cleared.');
+    void updateWebview();
+  });
+  safeRegister('opencode-zen.addServer', addServer);
+  safeRegister('opencode-zen.editServer', (_, serverId?: string) => editServer(serverId));
+  safeRegister('opencode-zen.removeServer', (_, serverId?: string) => removeServer(serverId));
+  safeRegister('opencode-zen.launchServer', (_, serverId?: string) => launchServer(serverId));
+  safeRegister('opencode-zen.refreshServers', () => {
+    void serverManager.connectAll();
+    void updateWebview();
+    vscode.window.showInformationMessage('Servers refreshed.');
+  });
+  safeRegister('opencode-zen.showOutput', () => zenProvider.showOutput());
+  safeRegister('opencode-zen.showOutputLog', () => {
+    const stats = aggregateUsageStats([
+      zenProvider.getUsageTracker().getStats(),
+      goProvider.getUsageTracker().getStats(),
+      freeProvider.getUsageTracker().getStats(),
+    ]);
+    zenProvider.showOutput();
+    zenProvider.appendOutput(formatUsageOutput(stats));
+  });
 }
 
 async function updateWebview(): Promise<void> {

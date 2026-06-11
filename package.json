@@ -2,7 +2,7 @@
   "name": "opencode-zen-copilot",
   "displayName": "OpenCode Zen for Copilot",
   "description": "Access OpenCode Zen models in GitHub Copilot Chat — free models included",
-  "version": "3.2.3",
+  "version": "3.2.5",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -113,7 +113,10 @@
               "description": "User-visible description shown while the tool runs"
             }
           },
-          "required": ["query", "description"]
+          "required": [
+            "query",
+            "description"
+          ]
         }
       }
     ],
@@ -266,5 +269,7 @@
     "sharp": "^0.34.5",
     "typescript": "^5.6.0"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.17.3"
+  }
 }

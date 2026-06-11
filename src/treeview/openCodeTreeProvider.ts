@@ -33,9 +33,11 @@ export class OpenCodeTreeProvider implements vscode.TreeDataProvider<TreeItem> {
     // Per-server stats
     for (const s of this.state.servers) {
       const status = s.available ? '● Online' : '○ Offline';
+      const typeIcon = s.type === 'lmstudio' ? '$(chip)' : s.type === 'ollama' ? '$(zap)' : '$(server)';
+      const typeLabel = s.type === 'lmstudio' ? 'LM Studio' : s.type === 'ollama' ? 'Ollama' : 'OpenCode';
       dashChildren.push(new StatNode(
-        `${s.name} — ${status}`,
-        `${s.models.length} models · ${s.providerCount} providers`
+        `${typeIcon} ${s.name} — ${status}`,
+        `${s.models.length} models · ${typeLabel}`
       ));
     }
 

@@ -615,8 +615,34 @@ async function updateWebview(): Promise<void> {
     };
   });
 
+  // Add LM Studio and Ollama servers to dashboard
+  const lmStudioServers = lmStudioProvider?.getServerStatus() || [];
+  const ollamaServers = ollamaProvider?.getServerStatus() || [];
+
+  const allServersWithExtras: ServerData[] = [
+    ...allServers.map(s => ({ ...s, type: 'opencode' as const })),
+    ...lmStudioServers.map(s => ({
+      id: s.id,
+      name: s.name,
+      url: s.url,
+      available: s.available,
+      models: s.models,
+      providerCount: 1,
+      type: 'lmstudio' as const,
+    })),
+    ...ollamaServers.map(s => ({
+      id: s.id,
+      name: s.name,
+      url: s.url,
+      available: s.available,
+      models: s.models,
+      providerCount: 1,
+      type: 'ollama' as const,
+    })),
+  ];
+
   const state: DashboardState = {
-    servers: allServers,
+    servers: allServersWithExtras,
     zenKey,
     goKey,
     zenFamilies: zenProvider.getModelFamilies(),

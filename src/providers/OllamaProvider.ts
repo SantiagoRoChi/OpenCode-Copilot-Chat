@@ -76,6 +76,23 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
     void this.fetchModels().then(() => this._onDidChangeLanguageModelChatInformation.fire());
   }
 
+  getServerStatus(): Array<{ id: string; name: string; url: string; available: boolean; models: string[] }> {
+    const result: Array<{ id: string; name: string; url: string; available: boolean; models: string[] }> = [];
+    for (const [serverId, entry] of this.modelServerMap) {
+      const serverModels = this.models
+        .filter(m => m.id.startsWith(`${serverId}:`) && !m.id.includes(':offline'))
+        .map(m => m.id.split(':')[1] || m.id);
+      result.push({
+        id: serverId,
+        name: entry.serverName,
+        url: entry.baseUrl,
+        available: entry.connected && serverModels.length > 0,
+        models: serverModels,
+      });
+    }
+    return result;
+  }
+
   async provideLanguageModelChatInformation(
     _options: { silent: boolean; configuration?: { [key: string]: unknown } },
     _token: vscode.CancellationToken
@@ -96,6 +113,7 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
       placeholders.push({
         id: `${serverId}:offline`,
         name: `⚠️ ${entry.serverName} (offline)`,
+        vendor: 'ollama',
         family: 'ollama',
         version: '1',
         maxInputTokens: 0,
@@ -132,10 +150,13 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
           allModels.push({
             id: modelId,
             name: `${info.name} (${entry.serverName})`,
+            vendor: 'ollama',
             family: info.family || 'unknown',
             version: '1',
             maxInputTokens: info.maxContextLength,
             maxOutputTokens: 4096,
+            detail: `${info.family || 'unknown'} · ${info.parameterSize || '?'} · ${Math.round(info.maxContextLength / 1000)}K context`,
+            tooltip: `${info.name}\n\nServer: ${entry.serverName}\nFamily: ${info.family || 'unknown'}\nSize: ${info.parameterSize || '?'}\nQuantization: ${info.quantizationLevel || '?'}\nContext: ${Math.round(info.maxContextLength / 1000)}K\nVision: ${info.supportsVision ? 'Yes' : 'No'}\nTools: ${info.supportsTools ? 'Yes' : 'No'}`,
             capabilities: {
               imageInput: info.supportsVision,
               toolCalling: info.supportsTools,
@@ -209,7 +230,7 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
   async provideLanguageModelChatResponse(
     model: vscode.LanguageModelChatInformation,
     messages: readonly vscode.LanguageModelChatMessage[],
-    _options: vscode.ProvideLanguageModelChatResponseOptions,
+    options: vscode.ProvideLanguageModelChatResponseOptions,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken
   ): Promise<void> {
@@ -231,6 +252,33 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
       const abortController = new AbortController();
       token.onCancellationRequested(() => abortController.abort());
 
+      // Build Ollama options with modelOptions from Copilot Chat
+      const ollamaOptions: any = {
+        temperature: 0.7,
+        num_predict: 4096,
+      };
+
+      if (options.modelOptions) {
+        for (const [key, value] of Object.entries(options.modelOptions)) {
+          if (value !== undefined && value !== null) {
+            // Map common option names
+            if (key === 'max_tokens') {
+              ollamaOptions.num_predict = value;
+            } else if (key === 'top_p') {
+              ollamaOptions.top_p = value;
+            } else if (key === 'top_k') {
+              ollamaOptions.top_k = value;
+            } else if (key === 'seed') {
+              ollamaOptions.seed = value;
+            } else if (key === 'repeat_penalty') {
+              ollamaOptions.repeat_penalty = value;
+            } else {
+              ollamaOptions[key] = value;
+            }
+          }
+        }
+      }
+
       // Use Ollama generate API with streaming
       const response = await fetch(`${entry.baseUrl}/api/generate`, {
         method: 'POST',
@@ -239,10 +287,7 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
           model: modelId,
           messages: ollamaMessages,
           stream: true,
-          options: {
-            temperature: 0.7,
-            num_predict: 4096,
-          },
+          options: ollamaOptions,
         }),
         signal: abortController.signal,
       });

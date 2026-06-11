@@ -1,9 +1,39 @@
 import * as vscode from 'vscode';
 
-export interface LMStudioModel {
-  id: string;
-  object: string;
-  owned_by: string;
+// LM Studio native API v1 model response
+export interface LMStudioApiModel {
+  type: 'llm' | 'embedding';
+  publisher: string;
+  key: string;
+  display_name: string;
+  architecture?: string | null;
+  quantization?: { name: string; bits_per_weight: number } | null;
+  size_bytes: number;
+  params_string?: string | null;
+  loaded_instances: Array<{
+    id: string;
+    config: {
+      context_length: number;
+      eval_batch_size?: number;
+      parallel?: number;
+      flash_attention?: boolean;
+      num_experts?: number;
+      offload_kv_cache_to_gpu?: boolean;
+    };
+  }>;
+  max_context_length: number;
+  format?: 'gguf' | 'mlx' | null;
+  capabilities?: {
+    vision?: boolean;
+    trained_for_tool_use?: boolean;
+    reasoning?: {
+      allowed_options: Array<'off' | 'on' | 'low' | 'medium' | 'high'>;
+      default: 'off' | 'on' | 'low' | 'medium' | 'high';
+    };
+  };
+  description?: string | null;
+  variants?: string[];
+  selected_variant?: string;
 }
 
 export interface LMStudioModelInfo {
@@ -13,6 +43,8 @@ export interface LMStudioModelInfo {
   supportsReasoning: boolean;
   supportsVision: boolean;
   supportsTools: boolean;
+  reasoningOptions?: Array<'off' | 'on' | 'low' | 'medium' | 'high'>;
+  reasoningDefault?: 'off' | 'on' | 'low' | 'medium' | 'high';
   quantization?: string;
   parameters?: string;
   architecture?: string;
@@ -66,6 +98,23 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
     void this.fetchModels().then(() => this._onDidChangeLanguageModelChatInformation.fire());
   }
 
+  getServerStatus(): Array<{ id: string; name: string; url: string; available: boolean; models: string[] }> {
+    const result: Array<{ id: string; name: string; url: string; available: boolean; models: string[] }> = [];
+    for (const [serverId, entry] of this.modelServerMap) {
+      const serverModels = this.models
+        .filter(m => m.id.startsWith(`${serverId}:`) && !m.id.includes(':offline'))
+        .map(m => m.id.split(':')[1] || m.id);
+      result.push({
+        id: serverId,
+        name: entry.serverName,
+        url: entry.baseUrl,
+        available: entry.connected && serverModels.length > 0,
+        models: serverModels,
+      });
+    }
+    return result;
+  }
+
   async provideLanguageModelChatInformation(
     _options: { silent: boolean; configuration?: { [key: string]: unknown } },
     _token: vscode.CancellationToken
@@ -86,6 +135,7 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
       placeholders.push({
         id: `${serverId}:offline`,
         name: `⚠️ ${entry.serverName} (offline)`,
+        vendor: 'lmstudio',
         family: 'lmstudio',
         version: '1',
         maxInputTokens: 0,
@@ -101,7 +151,8 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
 
     for (const [serverId, entry] of this.modelServerMap) {
       try {
-        const response = await fetch(`${entry.baseUrl}/v1/models`, {
+        // Use LM Studio native API v1 for rich model info
+        const response = await fetch(`${entry.baseUrl}/api/v1/models`, {
           signal: AbortSignal.timeout(5000),
         });
 
@@ -110,22 +161,29 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
           continue;
         }
 
-        const data = await response.json() as { data: LMStudioModel[] };
-        const models = data.data || [];
+        const data = await response.json() as { models: LMStudioApiModel[] };
+        const models = (data.models || []).filter(m => m.type === 'llm');
 
         for (const model of models) {
-          const modelId = `${serverId}:${model.id}`;
-          const info = await this.detectModelInfo(entry.baseUrl, model.id);
+          const modelId = `${serverId}:${model.key}`;
+          const info = this.extractModelInfo(model);
 
           this.modelInfoMap.set(modelId, info);
+
+          const reasoningLabel = info.supportsReasoning
+            ? ` · reasoning (${info.reasoningDefault || 'off'})`
+            : '';
 
           allModels.push({
             id: modelId,
             name: `${info.name} (${entry.serverName})`,
+            vendor: 'lmstudio',
             family: info.architecture || 'unknown',
             version: '1',
             maxInputTokens: info.maxContextLength,
             maxOutputTokens: 4096,
+            detail: `${info.architecture || 'unknown'} · ${info.parameters || '?'} · ${Math.round(info.maxContextLength / 1000)}K context${info.supportsVision ? ' · vision' : ''}${info.supportsTools ? ' · tools' : ''}${reasoningLabel}`,
+            tooltip: `${info.name}\n\nServer: ${entry.serverName}\nArchitecture: ${info.architecture || 'unknown'}\nParameters: ${info.parameters || '?'}\nQuantization: ${info.quantization || '?'}\nContext: ${Math.round(info.maxContextLength / 1000)}K\nVision: ${info.supportsVision ? 'Yes' : 'No'}\nTools: ${info.supportsTools ? 'Yes' : 'No'}\nReasoning: ${info.supportsReasoning ? `Yes (${info.reasoningOptions?.join(', ') || 'on'})` : 'No'}`,
             capabilities: {
               imageInput: info.supportsVision,
               toolCalling: info.supportsTools,
@@ -134,7 +192,7 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
         }
 
         entry.connected = true;
-        this.outputChannel.appendLine(`[LMStudioProvider] "${entry.serverName}": ${models.length} models`);
+        this.outputChannel.appendLine(`[LMStudioProvider] "${entry.serverName}": ${models.length} LLM models`);
       } catch (err) {
         entry.connected = false;
         this.outputChannel.appendLine(`[LMStudioProvider] "${entry.serverName}" ERROR: ${err}`);
@@ -145,59 +203,29 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
     this.lastFetch = Date.now();
   }
 
-  private async detectModelInfo(baseUrl: string, modelId: string): Promise<LMStudioModelInfo> {
-    // Default info
+  private extractModelInfo(model: LMStudioApiModel): LMStudioModelInfo {
     const info: LMStudioModelInfo = {
-      id: modelId,
-      name: modelId.split('/').pop() || modelId,
-      maxContextLength: 32768,
+      id: model.key,
+      name: model.display_name || model.key.split('/').pop() || model.key,
+      maxContextLength: model.max_context_length || 32768,
       supportsReasoning: false,
       supportsVision: false,
       supportsTools: false,
+      architecture: model.architecture || undefined,
+      parameters: model.params_string || undefined,
+      quantization: model.quantization?.name || undefined,
     };
 
-    // Try to get model details from LMStudio
-    try {
-      const response = await fetch(`${baseUrl}/v1/models/${modelId}`, {
-        signal: AbortSignal.timeout(3000),
-      });
+    // Extract capabilities from LM Studio API
+    if (model.capabilities) {
+      info.supportsVision = !!model.capabilities.vision;
+      info.supportsTools = !!model.capabilities.trained_for_tool_use;
 
-      if (response.ok) {
-        const details = await response.json() as any;
-        if (details.max_context_length) {
-          info.maxContextLength = details.max_context_length;
-        }
-        if (details.quantization) {
-          info.quantization = details.quantization;
-        }
-        if (details.parameters) {
-          info.parameters = details.parameters;
-        }
-        if (details.architecture) {
-          info.architecture = details.architecture;
-        }
+      if (model.capabilities.reasoning) {
+        info.supportsReasoning = true;
+        info.reasoningOptions = model.capabilities.reasoning.allowed_options;
+        info.reasoningDefault = model.capabilities.reasoning.default;
       }
-    } catch {
-      // Fallback to heuristic detection
-    }
-
-    // Heuristic detection based on model name
-    const nameLower = modelId.toLowerCase();
-    if (nameLower.includes('vision') || nameLower.includes('vl') || nameLower.includes('multimodal')) {
-      info.supportsVision = true;
-    }
-    if (nameLower.includes('reasoning') || nameLower.includes('think') || nameLower.includes('deepseek') || nameLower.includes('qwen3')) {
-      info.supportsReasoning = true;
-    }
-    if (nameLower.includes('tool') || nameLower.includes('function')) {
-      info.supportsTools = true;
-    }
-    if (nameLower.includes('128k') || nameLower.includes('128k')) {
-      info.maxContextLength = 128000;
-    } else if (nameLower.includes('32k')) {
-      info.maxContextLength = 32768;
-    } else if (nameLower.includes('8k')) {
-      info.maxContextLength = 8192;
     }
 
     return info;
@@ -206,7 +234,7 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
   async provideLanguageModelChatResponse(
     model: vscode.LanguageModelChatInformation,
     messages: readonly vscode.LanguageModelChatMessage[],
-    _options: vscode.ProvideLanguageModelChatResponseOptions,
+    options: vscode.ProvideLanguageModelChatResponseOptions,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken
   ): Promise<void> {
@@ -214,31 +242,103 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
     const entry = this.modelServerMap.get(serverId);
     if (!entry) throw new Error(`Server ${serverId} not found`);
 
+    const modelInfo = this.modelInfoMap.get(model.id);
+
     try {
-      // Convert messages to OpenAI format
-      const openaiMessages = messages.map(msg => {
+      // Convert messages to LM Studio native format
+      const input: any[] = [];
+      let systemPrompt = '';
+
+      for (const msg of messages) {
         const role = msg.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant' : 'user';
         const content = msg.content
           .filter(part => part instanceof vscode.LanguageModelTextPart)
           .map(part => (part as vscode.LanguageModelTextPart).value)
           .join('');
-        return { role, content };
-      });
+
+        if (role === 'assistant') {
+          input.push({ type: 'message', role: 'assistant', content });
+        } else {
+          // Check for images in user messages
+          const imageParts = msg.content.filter(part => part instanceof vscode.LanguageModelDataPart);
+          if (imageParts.length > 0) {
+            const items: any[] = [{ type: 'text', text: content }];
+            for (const img of imageParts) {
+              const dataPart = img as vscode.LanguageModelDataPart;
+              if (dataPart.data && dataPart.mimeType) {
+                const base64 = Buffer.from(dataPart.data).toString('base64');
+                items.push({
+                  type: 'image',
+                  data_url: `data:${dataPart.mimeType};base64,${base64}`,
+                });
+              }
+            }
+            input.push({ type: 'message', role: 'user', content: items });
+          } else {
+            input.push({ type: 'message', role: 'user', content });
+          }
+        }
+      }
 
       const abortController = new AbortController();
       token.onCancellationRequested(() => abortController.abort());
 
-      // Use streaming API
-      const response = await fetch(`${entry.baseUrl}/v1/chat/completions`, {
+      // Build LM Studio native request body
+      const requestBody: any = {
+        model: modelId,
+        input,
+        stream: true,
+      };
+
+      // Apply modelOptions from VS Code
+      if (options.modelOptions) {
+        for (const [key, value] of Object.entries(options.modelOptions)) {
+          if (value !== undefined && value !== null) {
+            if (key === 'temperature') {
+              requestBody.temperature = value;
+            } else if (key === 'max_tokens') {
+              requestBody.max_tokens = value;
+            } else if (key === 'top_p') {
+              requestBody.top_p = value;
+            } else if (key === 'reasoning') {
+              // LM Studio reasoning: { enabled: true } or { level: 'low'|'medium'|'high' }
+              if (typeof value === 'boolean') {
+                requestBody.reasoning = { enabled: value };
+              } else if (typeof value === 'string') {
+                requestBody.reasoning = { level: value };
+              } else if (typeof value === 'object') {
+                requestBody.reasoning = value;
+              }
+            } else {
+              requestBody[key] = value;
+            }
+          }
+        }
+      }
+
+      // Set defaults
+      if (requestBody.temperature === undefined) {
+        requestBody.temperature = 0.7;
+      }
+      if (requestBody.max_tokens === undefined) {
+        requestBody.max_tokens = 4096;
+      }
+
+      // Enable reasoning if model supports it and user hasn't explicitly disabled it
+      if (modelInfo?.supportsReasoning && !requestBody.reasoning) {
+        const defaultLevel = modelInfo.reasoningDefault || 'on';
+        if (defaultLevel === 'on' || defaultLevel === 'low' || defaultLevel === 'medium' || defaultLevel === 'high') {
+          requestBody.reasoning = { level: defaultLevel };
+        } else {
+          requestBody.reasoning = { enabled: true };
+        }
+      }
+
+      // Use LM Studio native streaming API
+      const response = await fetch(`${entry.baseUrl}/api/v1/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: modelId,
-          messages: openaiMessages,
-          temperature: 0.7,
-          max_tokens: 4096,
-          stream: true,
-        }),
+        body: JSON.stringify(requestBody),
         signal: abortController.signal,
       });
 
@@ -251,10 +351,11 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
         throw new Error('No response body for streaming');
       }
 
-      // Process SSE stream
+      // Process LM Studio SSE stream with named events
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let inReasoning = false;
 
       try {
         while (true) {
@@ -265,28 +366,49 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
 
+          let currentEvent = '';
           for (const line of lines) {
             const trimmed = line.trim();
-            if (!trimmed || trimmed === 'data: [DONE]') continue;
+            if (!trimmed) {
+              currentEvent = '';
+              continue;
+            }
 
-            if (trimmed.startsWith('data: ')) {
+            if (trimmed.startsWith('event: ')) {
+              currentEvent = trimmed.slice(7);
+            } else if (trimmed.startsWith('data: ')) {
               try {
                 const data = JSON.parse(trimmed.slice(6));
-                const delta = data.choices?.[0]?.delta;
 
-                if (delta?.content) {
-                  progress.report(new vscode.LanguageModelTextPart(delta.content));
+                switch (currentEvent) {
+                  case 'reasoning.start':
+                    inReasoning = true;
+                    break;
+                  case 'reasoning.delta':
+                    if (data.delta) {
+                      progress.report(new vscode.LanguageModelTextPart(data.delta));
+                    }
+                    break;
+                  case 'reasoning.end':
+                    inReasoning = false;
+                    break;
+                  case 'message.delta':
+                    if (data.delta) {
+                      progress.report(new vscode.LanguageModelTextPart(data.delta));
+                    }
+                    break;
+                  case 'error':
+                    throw new Error(data.message || 'LM Studio streaming error');
+                  case 'chat.end':
+                    // Stream complete
+                    break;
                 }
-
-                if (delta?.reasoning_content) {
-                  progress.report(new vscode.LanguageModelTextPart(`[reasoning]\n${delta.reasoning_content}\n[/reasoning]\n\n`));
+              } catch (parseErr) {
+                if (parseErr instanceof Error && !parseErr.message.includes('LM Studio streaming error')) {
+                  // Skip malformed lines
+                } else {
+                  throw parseErr;
                 }
-
-                if (data.choices?.[0]?.finish_reason) {
-                  // Stream finished
-                }
-              } catch {
-                // Skip malformed lines
               }
             }
           }
@@ -294,9 +416,6 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
       } finally {
         reader.releaseLock();
       }
-
-      // Ensure we emit something if stream was empty
-      // (LMStudio sometimes returns empty content)
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);

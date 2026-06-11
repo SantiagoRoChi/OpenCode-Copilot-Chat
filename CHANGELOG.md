@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.2.2] - 2026-06-11
+
+### Fixed
+- **Build errors (CI)**: 11 TypeScript compilation errors that broke `tsc --noEmit`
+  - `modelRegistry.ts`: Añadida propiedad `npmPackage` faltante en `RegistryEntry`; corregido `fmt.endpoint` → `fmt.chatEndpoint`
+  - `multiServerManager.ts`: Reemplazado tipo `HeadersInit` por `Record<string, string>` (no disponible en Node.js); corregido tipo `Promise<any[] | undefined>` con variable intermedia; actualizado `config.password` → `config.hasPassword`
+  - `secretStorage.ts`: Cambiado `password?: string` → `hasPassword?: boolean` en `ServerConfig` (se usaba como flag booleano)
+  - `extension.ts`: Añadido import de `DashboardState` faltante; corregido tipo `boolean` asignado a `password` (string)
+  - `BaseOpenCodeProvider.ts`: `LanguageModelImagePart` no existe en esta API, se usa `(vscode as any)`; `reporter` no definida en scope de `reportThinkingBlock`
+  - `OpenCodeServerProvider.ts`: Eliminada propiedad `vendor` y cambiado `description` → `detail` en objeto `LanguageModelChatInformation`
+  - `subagentTool.ts`: Añadido `toolMode: vscode.LanguageModelChatToolMode.Auto` requerido en opciones
+
+## [3.2.1] - 2026-06-11
+
+### Changed
+- **Server launch**: Reemplazado `exec()` con `spawn()` para lanzar servidores locales como proceso background sin ventana `cmd.exe` emergente
+- **Launch UX**: El usuario puede elegir entre lanzar servidor en terminal VS Code o como proceso background invisible
+- **Activation**: Ya no se auto-lanzan servidores locales al activar la extensión — se muestra log en consola indicando que use el comando manual
+
+### Added
+- **SSE streaming**: Server provider ahora lee respuestas como `text/event-stream` con progreso incremental en lugar de esperar la respuesta completa
+- **Server launch command**: Interfaz interactiva con `showQuickPick` para elegir modo de lanzamiento
+
 ## [3.2.0] - 2026-06-02
 
 ### Added

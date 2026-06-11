@@ -51,18 +51,18 @@ const DEFAULT_INPUT = 128000;
 const DEFAULT_OUTPUT = 32000;
 
 // Map from model ID prefix → API format (used for fallback)
-const FORMAT_HINTS: Record<string, { endpoint: string; apiFormat: ApiFormat }> = {
-  'gpt-5':       { endpoint: '/responses', apiFormat: 'openai' },
-  'gpt-4o':      { endpoint: '/responses', apiFormat: 'openai' },
-  'claude-':     { endpoint: '/messages',  apiFormat: 'anthropic' },
-  'gemini-':     { endpoint: '/models/{id}', apiFormat: 'google' },
+const FORMAT_HINTS: Record<string, { chatEndpoint: string; apiFormat: ApiFormat }> = {
+  'gpt-5':       { chatEndpoint: '/responses', apiFormat: 'openai' },
+  'gpt-4o':      { chatEndpoint: '/responses', apiFormat: 'openai' },
+  'claude-':     { chatEndpoint: '/messages',  apiFormat: 'anthropic' },
+  'gemini-':     { chatEndpoint: '/models/{id}', apiFormat: 'google' },
 };
 
-function inferApiFormat(modelId: string): { endpoint: string; apiFormat: ApiFormat } {
+function inferApiFormat(modelId: string): { chatEndpoint: string; apiFormat: ApiFormat } {
   for (const [prefix, fmt] of Object.entries(FORMAT_HINTS)) {
     if (modelId.startsWith(prefix)) return fmt;
   }
-  return { endpoint: '/chat/completions', apiFormat: 'openai-compatible' };
+  return { chatEndpoint: '/chat/completions', apiFormat: 'openai-compatible' };
 }
 
 function inferFamily(modelId: string): string {
@@ -153,7 +153,7 @@ function modelsDevToRegistry(id: string, model: ModelsDevModel): RegistryEntry {
   const hasVision = model.modalities?.input?.some(m => m === 'image' || m === 'pdf') ?? false;
 
   return {
-    chatEndpoint: fmt.endpoint,
+    chatEndpoint: fmt.chatEndpoint,
     apiFormat: fmt.apiFormat,
     name: model.name || id,
     family: inferFamily(id),
@@ -163,6 +163,9 @@ function modelsDevToRegistry(id: string, model: ModelsDevModel): RegistryEntry {
     toolCalling: model.tool_call ?? true,
     reasoning: model.reasoning ?? false,
     thinkingEffort: model.reasoning ? 'high' : undefined,
+    npmPackage: fmt.apiFormat === 'anthropic' ? '@ai-sdk/anthropic' :
+                fmt.apiFormat === 'google' ? '@ai-sdk/google' :
+                '@ai-sdk/openai',
     // Cost is already in $/M tokens from models.dev
     pricePerMillionInput: model.cost?.input,
     pricePerMillionOutput: model.cost?.output,

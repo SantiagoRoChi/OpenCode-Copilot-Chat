@@ -10,7 +10,7 @@ export interface ServerConfig {
   url: string;
   port: number;
   username?: string;
-  password?: string;
+  hasPassword?: boolean;
   enabled: boolean;
   isLocal: boolean;
 }

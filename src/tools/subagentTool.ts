@@ -83,7 +83,7 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
       await provider.provideLanguageModelChatResponse(
         model,
         messages,
-        { tools: [] },  // Subagent runs without additional tools
+        { tools: [], toolMode: vscode.LanguageModelChatToolMode.Auto },  // Subagent runs without additional tools
         {
           report: (part) => {
             if (part instanceof vscode.LanguageModelTextPart) {

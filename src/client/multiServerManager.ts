@@ -66,7 +66,7 @@ export class ServerApiClient {
     this.requestTimeout = timeout;
   }
 
-  public buildHeaders(): HeadersInit {
+  public buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.username && this.password) {
       const encoded = Buffer.from(`${this.username}:${this.password}`).toString('base64');
@@ -102,11 +102,13 @@ export class ServerApiClient {
   }
 
   async getSessions(limit = 20): Promise<any[]> {
-    return this.get<any[]>(`/session?limit=${limit}`) ?? [];
+    const data = await this.get<any[]>(`/session?limit=${limit}`);
+    return data ?? [];
   }
 
   async getSessionStatus(): Promise<Record<string, any>> {
-    return this.get<Record<string, any>>('/session/status') ?? {};
+    const data = await this.get<Record<string, any>>('/session/status');
+    return data ?? {};
   }
 
   async getUser(): Promise<ServerUserInfo | undefined> {
@@ -191,7 +193,7 @@ export class MultiServerManager {
       if (!config.enabled) continue;
 
       const baseUrl = `${config.url}:${config.port}`;
-      const password = config.password ? await this.secretStorage.getServerPassword(config.id) : undefined;
+      const password = config.hasPassword ? await this.secretStorage.getServerPassword(config.id) : undefined;
       const client = new ServerApiClient(baseUrl, config.username, password);
 
       const health = await client.healthCheck();
@@ -216,7 +218,7 @@ export class MultiServerManager {
     if (!config || !config.enabled) return undefined;
 
     const baseUrl = `${config.url}:${config.port}`;
-    const password = config.password ? await this.secretStorage.getServerPassword(config.id) : undefined;
+    const password = config.hasPassword ? await this.secretStorage.getServerPassword(config.id) : undefined;
     const client = new ServerApiClient(baseUrl, config.username, password);
     const health = await client.healthCheck();
 

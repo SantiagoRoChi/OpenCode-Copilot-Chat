@@ -11,6 +11,7 @@ import { MultiServerManager, initMultiServerManager } from './client/multiServer
 import { OpenCodeTreeProvider } from './treeview/openCodeTreeProvider';
 import { initModelRegistry, getRegistrySize } from './client/modelRegistry';
 import { OpenCodeSubagentTool } from './tools/subagentTool';
+import { DashboardState } from './webview/openCodeWebviewProvider';
 import { randomUUID } from 'crypto';
 
 let freeProvider: OpenCodeFreeProvider;
@@ -287,7 +288,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     });
 
     let newPassword = '';
-    const currentPwd = config.password ? await secretStorage.getServerPassword(serverId!) : '';
+    const currentPwd = config.hasPassword ? await secretStorage.getServerPassword(serverId!) : '';
     const pwd = await vscode.window.showInputBox({
       title: 'Password', prompt: 'Password (empty to keep current)', password: true, value: currentPwd, ignoreFocusOut: true,
     });
@@ -297,7 +298,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     config.url = url;
     config.port = port;
     config.username = username || undefined;
-    config.password = !!newPassword || !!currentPwd;
+    config.hasPassword = !!(newPassword || currentPwd);
     config.isLocal = url?.includes('127.0.0.1') || url?.includes('localhost');
 
     await secretStorage.setServerConfigs(configs);

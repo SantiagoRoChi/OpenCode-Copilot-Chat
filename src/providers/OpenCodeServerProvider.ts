@@ -136,8 +136,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
             allModels.push({
               id: uniqueId,
               name: `${info.name} (${entry.serverName})`,
-              description: costStr || `${provider.name} · ${info.contextLabel} in`,
-              vendor: this.vendor,
+              detail: costStr || `${provider.name} · ${info.contextLabel} in`,
               family: provider.name,
               version: modelData.version || '1',
               maxInputTokens: maxInput,

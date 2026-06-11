@@ -277,7 +277,7 @@ async provideLanguageModelChatResponse(
       hasImages = messages.some(msg =>
         msg.content.some(part => {
           try {
-            if (part instanceof vscode.LanguageModelImagePart) return true;
+            if (part instanceof (vscode as any).LanguageModelImagePart) return true;
             // Check for DataPart with image mime types
             if (part instanceof vscode.LanguageModelDataPart) {
               const mime = part.mimeType || '';
@@ -629,7 +629,7 @@ async provideLanguageModelChatResponse(
           reasonerOutputs.length = 0;
           // Use ThinkingPart for collapsible reasoning blocks
           try {
-            const thinkingPart = new (vscode as any).LanguageModelThinkingPart(full, `reasoner-${reporter.requestId}-${Date.now()}`);
+            const thinkingPart = new (vscode as any).LanguageModelThinkingPart(full, `reasoner-${requestId}-${Date.now()}`);
             progress.report(thinkingPart);
           } catch {
             // Fallback if LanguageModelThinkingPart not available

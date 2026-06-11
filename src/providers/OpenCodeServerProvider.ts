@@ -8,7 +8,6 @@ import {
   estimateTextTokens,
   calculateMaxInputTokens,
   truncateMessagesToFit,
-  buildInputText,
 } from '../utils/tokenEstimate';
 
 export type ServerRequestStateEvent =
@@ -79,8 +78,8 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
   }
 
   async provideLanguageModelChatInformation(
-    options: { silent: boolean; configuration?: { [key: string]: unknown } },
-    token: vscode.CancellationToken
+    _options: { silent: boolean; configuration?: { [key: string]: unknown } },
+    _token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelChatInformation[]> {
     if (Date.now() - this.lastFetch > 5 * 60 * 1000 || this.models.length === 0) {
       await this.fetchModels();
@@ -167,7 +166,7 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
   async provideLanguageModelChatResponse(
     model: vscode.LanguageModelChatInformation,
     messages: readonly vscode.LanguageModelChatMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
+    _options: vscode.ProvideLanguageModelChatResponseOptions,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken
   ): Promise<void> {
@@ -191,19 +190,21 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
       const textParts = truncatedMessages
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => ({
-          type: 'text',
+          type: 'text' as const,
           text: typeof m.content === 'string' ? m.content : m.content.map((c: any) => c.text || '').join(''),
         }))
         .filter((p: any) => p.text);
 
-      // Auth headers
+      // ── OpenCode Server API: JSON con parts[] ──
+      // El servidor devuelve JSON plano (no SSE). Procesamos parts[]
+      // inmediatamente sin delays ni simulación.
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       Object.assign(headers, entry.client.buildHeaders());
 
       const abortController = new AbortController();
       token.onCancellationRequested(() => abortController.abort());
 
-      // Step 1: Create session
+      // 1. Crear sesión
       const sessionRes = await fetch(`${entry.baseUrl}/session`, {
         method: 'POST',
         headers,
@@ -215,16 +216,13 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
       const sessionId = sessionData.id;
       this.outputChannel.appendLine(`[${entry.serverName}] Session: ${sessionId}`);
 
-      // Step 2: Send message y leer respuesta como SSE stream
+      // 2. Enviar mensaje y obtener respuesta JSON
       const messageUrl = `${entry.baseUrl}/session/${sessionId}/message`;
-      this.outputChannel.appendLine(`[${entry.serverName}] POST ${messageUrl} (SSE stream)`);
+      this.outputChannel.appendLine(`[${entry.serverName}] POST ${messageUrl}`);
 
       const messageRes = await fetch(messageUrl, {
         method: 'POST',
-        headers: {
-          ...headers,
-          'Accept': 'text/event-stream',
-        },
+        headers,
         body: JSON.stringify({
           model: { providerID: info?.providerID || 'opencode', modelID: modelId },
           parts: textParts,
@@ -237,23 +235,77 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
         throw new Error(`HTTP ${messageRes.status}: ${body}`);
       }
 
-      // Step 3: Leer toda la respuesta cruda del stream
-      const reader = messageRes.body?.getReader();
-      if (!reader) throw new Error('No response body');
+      // 3. Parsear JSON y procesar parts[]
+      const messageData = await messageRes.json() as any;
+      this.outputChannel.appendLine(`[${entry.serverName}] Response received`);
 
-      const rawData = await this.readAllStreamData(reader, token, abortController);
-      this.outputChannel.appendLine(`[${entry.serverName}] Raw response: ${rawData.length} bytes`);
-
-      // Step 4: Procesar la respuesta — intenta múltiples formatos (SSE, NDJSON, JSON plano)
-      const processed = await this.processAnyFormatResponse(
-        rawData, progress, token, entry, modelId, modelName, info
-      );
-
-      if (processed > 0) {
-        this.outputChannel.appendLine(`[${entry.serverName}] Response complete (${processed} chunks reported)`);
-      } else {
-        this.outputChannel.appendLine(`[${entry.serverName}] WARNING: No content extracted from response`);
+      // Verificar error a nivel top-level
+      if (messageData.error) {
+        throw new Error(messageData.error.message || JSON.stringify(messageData.error));
       }
+
+      const parts = messageData.parts || [];
+      let totalText = '';
+      let reasoningText = '';
+      let toolCalls: vscode.LanguageModelToolCallPart[] = [];
+
+      // Acumular todo primero
+      for (const part of parts) {
+        if (token.isCancellationRequested) break;
+
+        switch (part.type) {
+          case 'text':
+            if (part.text) totalText += part.text;
+            break;
+          case 'reasoning':
+            if (part.text) reasoningText += part.text;
+            break;
+          case 'tool':
+            if (part.state?.status === 'pending') {
+              toolCalls.push(new vscode.LanguageModelToolCallPart(
+                part.callID || `call_${Date.now()}`,
+                part.tool || 'unknown',
+                part.state.input || {}
+              ));
+            }
+            break;
+          case 'step-finish':
+            if (part.tokens) {
+              this.recordUsage(part.tokens, entry, modelId, modelName);
+            }
+            break;
+          case 'error':
+            throw new Error(part.text || 'Unknown server error');
+        }
+      }
+
+      // Emitir en orden: reasoning → tools → text
+      // Usamos yield al event loop entre cada report para que VS Code
+      // procese el chunk y actualice el UI ANTES de que la función termine.
+      const yieldLoop = () => new Promise<void>(r => setTimeout(r, 0));
+
+      if (reasoningText) {
+        progress.report(new vscode.LanguageModelTextPart(`[reasoning]\n${reasoningText}\n[/reasoning]\n\n`));
+        await yieldLoop();
+      }
+
+      for (const tc of toolCalls) {
+        progress.report(tc);
+        await yieldLoop();
+      }
+
+      if (totalText) {
+        progress.report(new vscode.LanguageModelTextPart(totalText));
+        await yieldLoop();
+      }
+
+      // Si no hay nada, enviar un part vacío para cerrar el "working"
+      if (!reasoningText && toolCalls.length === 0 && !totalText) {
+        progress.report(new vscode.LanguageModelTextPart(''));
+      }
+
+      this.outputChannel.appendLine(`[${entry.serverName}] Response complete (${totalText.length} chars, ${reasoningText.length} reasoning, ${toolCalls.length} tools)`);
+
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       this.outputChannel.appendLine(`[${entry.serverName}] ERROR: ${errorMessage}`);
@@ -300,402 +352,6 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
     return result;
   }
 
-  /**
-   * Lee todo el contenido de un ReadableStream como string.
-   */
-  private async readAllStreamData(
-    reader: ReadableStreamDefaultReader<Uint8Array>,
-    token: vscode.CancellationToken,
-    abortController: AbortController
-  ): Promise<string> {
-    const decoder = new TextDecoder();
-    let result = '';
-    while (true) {
-      if (token.isCancellationRequested) { abortController.abort(); break; }
-      const { done, value } = await reader.read();
-      if (done) break;
-      result += decoder.decode(value, { stream: true });
-    }
-    return result;
-  }
-
-  /**
-   * Intenta procesar la respuesta del servidor en múltiples formatos:
-   * 1. SSE estándar (event: + data:)
-   * 2. SSE sin event type (solo data:)
-   * 3. NDJSON (cada línea es JSON)
-   * 4. OpenAI-compatible SSE (choices[].delta)
-   * 5. JSON plano con array parts[]
-   * 6. Array JSON directo
-   *
-   * Devuelve el número de chunks reportados a VS Code.
-   */
-  private async processAnyFormatResponse(
-    rawData: string,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken,
-    entry: ServerEntry,
-    modelId: string,
-    modelName: string,
-    info: ServerModelInfo | undefined
-  ): Promise<number> {
-    if (!rawData || !rawData.trim()) return 0;
-
-    // ── 1. Intentar parsear como SSE (event: / data: lines) ──
-    const events = this.parseSSE(rawData);
-    if (events.length > 0) {
-      this.outputChannel.appendLine(`[${entry.serverName}] Parsed as SSE: ${events.length} events`);
-      return await this.processParsedEvents(events, progress, token, entry, modelId, modelName, info);
-    }
-
-    // ── 2. Intentar parsear como NDJSON (cada línea es JSON) ──
-    // Solo usamos NDJSON si al menos un evento se procesa correctamente
-    const ndjsonEvents = this.parseNDJSON(rawData);
-    if (ndjsonEvents.length > 0) {
-      this.outputChannel.appendLine(`[${entry.serverName}] Parsed as NDJSON: ${ndjsonEvents.length} events`);
-      const ndjsonResult = await this.processParsedEvents(ndjsonEvents, progress, token, entry, modelId, modelName, info);
-      if (ndjsonResult > 0) return ndjsonResult;
-      this.outputChannel.appendLine(`[${entry.serverName}] NDJSON events had no recognizable type, trying next format...`);
-    }
-
-    // ── 3. Intentar parsear como JSON plano ──
-    try {
-      const parsed = JSON.parse(rawData.trim());
-      const parts = parsed.parts || parsed.events || (Array.isArray(parsed) ? parsed : null);
-      if (parts && Array.isArray(parts) && parts.length > 0) {
-        this.outputChannel.appendLine(`[${entry.serverName}] Parsed as JSON with ${parts.length} parts`);
-        return await this.processParsedEvents(parts, progress, token, entry, modelId, modelName, info);
-      }
-      // Si es un solo evento con type
-      if (parsed.type) {
-        this.outputChannel.appendLine(`[${entry.serverName}] Parsed as single JSON event: ${parsed.type}`);
-        return await this.processParsedEvents([parsed], progress, token, entry, modelId, modelName, info);
-      }
-    } catch {
-      // No es JSON válido
-    }
-
-    // ── 4. Fallback: tratar todo como texto plano ──
-    const trimmed = rawData.trim();
-    if (trimmed.length > 0) {
-      this.outputChannel.appendLine(`[${entry.serverName}] Fallback: raw text (${trimmed.length} chars)`);
-      progress.report(new vscode.LanguageModelTextPart(trimmed));
-      return 1;
-    }
-
-    return 0;
-  }
-
-  /**
-   * Parsea SSE estándar: maneja event: + data: y solo data:
-   */
-  private parseSSE(rawData: string): any[] {
-    const events: any[] = [];
-    let currentEvent = '';
-    let hasSseData = false;
-
-    for (const line of rawData.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) { currentEvent = ''; continue; }
-      if (trimmed.startsWith(':')) continue; // comentario SSE
-
-      if (trimmed.startsWith('event: ')) {
-        currentEvent = trimmed.slice(7).trim();
-        continue;
-      }
-
-      if (trimmed.startsWith('data: ')) {
-        const data = trimmed.slice(6).trim();
-        hasSseData = true;
-        if (data === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(data);
-          // Si tiene event type asignado, lo añadimos
-          if (currentEvent && !parsed.type) parsed._sseEvent = currentEvent;
-          events.push(parsed);
-        } catch { /* ignorar */ }
-        continue;
-      }
-
-      // Línea sin prefijo SSE — posible NDJSON o basura
-      // No la procesamos aquí
-    }
-
-    // Si no encontramos data:, no era SSE — devolver vacío
-    if (!hasSseData) return [];
-    return events;
-  }
-
-  /**
-   * Parsea NDJSON: cada línea no vacía es un JSON independiente
-   */
-  private parseNDJSON(rawData: string): any[] {
-    const events: any[] = [];
-    let hasNonSseJson = false;
-
-    for (const line of rawData.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      // Saltar líneas que parecen SSE (las maneja parseSSE)
-      if (trimmed.startsWith('data:') || trimmed.startsWith('event:') || trimmed.startsWith(':')) continue;
-      try {
-        const parsed = JSON.parse(trimmed);
-        hasNonSseJson = true;
-        events.push(parsed);
-      } catch { /* ignorar */ }
-    }
-
-    return hasNonSseJson ? events : [];
-  }
-
-  /**
-   * Procesa una lista de eventos parseados y los reporta a VS Code.
-   */
-  private async processParsedEvents(
-    events: any[],
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken,
-    entry: ServerEntry,
-    modelId: string,
-    modelName: string,
-    info: ServerModelInfo | undefined
-  ): Promise<number> {
-    let reportedChunks = 0;
-    let totalText = '';
-    let isReasoningBlock = false;
-    let reasoningBuffer = '';
-    let lastProgressReport = Date.now();
-    const expireReasoning = () => { isReasoningBlock = false; reasoningBuffer = ''; };
-    const flushReasoning = () => {
-      if (reasoningBuffer.length > 0) {
-        try {
-          const tp = new (vscode as any).LanguageModelThinkingPart(reasoningBuffer, `reasoner-${Date.now()}`);
-          progress.report(tp);
-        } catch {
-          progress.report(new vscode.LanguageModelTextPart(`\n[reasoning]${reasoningBuffer}[/reasoning]\n`));
-        }
-        reportedChunks++;
-        reasoningBuffer = '';
-      }
-    };
-
-    for (let i = 0; i < events.length; i++) {
-      if (token.isCancellationRequested) break;
-
-      const event = events[i];
-      // Usar event.type, o event._sseEvent, o detectar por campos presentes
-      const type = event.type || event._sseEvent || this.inferEventType(event);
-      if (!type) continue;
-
-      switch (type) {
-        // ── Texto ──
-        case 'text':
-        case 'content':
-        case 'delta': {
-          const text = event.text ?? event.content ?? event.delta ?? '';
-          if (text) {
-            totalText += text;
-            progress.report(new vscode.LanguageModelTextPart(text));
-            reportedChunks++;
-            lastProgressReport = Date.now();
-          }
-          break;
-        }
-
-        // ── Razonamiento ──
-        case 'reasoning':
-        case 'thinking':
-        case 'reason': {
-          const text = event.text ?? event.content ?? event.thinking ?? '';
-          if (text) {
-            if (!isReasoningBlock) { isReasoningBlock = true; reasoningBuffer = ''; }
-            reasoningBuffer += text;
-            const now = Date.now();
-            if (now - lastProgressReport > 200) {
-              try {
-                const tp = new (vscode as any).LanguageModelThinkingPart(text, `reasoner-${Date.now()}`);
-                progress.report(tp);
-              } catch {
-                progress.report(new vscode.LanguageModelTextPart(text));
-              }
-              lastProgressReport = now;
-              reportedChunks++;
-            }
-          }
-          break;
-        }
-
-        // ── OpenAI delta ──
-        case 'openai-delta':
-        case 'chat.completion.chunk': {
-          const choice = event.choices?.[0]?.delta || event.choices?.[0];
-          if (choice) {
-            if (choice.content) {
-              totalText += choice.content;
-              progress.report(new vscode.LanguageModelTextPart(choice.content));
-              reportedChunks++;
-            }
-            if (choice.reasoning_content || choice.reasoningContent) {
-              const rt = choice.reasoning_content || choice.reasoningContent;
-              try {
-                const tp = new (vscode as any).LanguageModelThinkingPart(rt, `reasoner-${Date.now()}`);
-                progress.report(tp);
-              } catch {
-                progress.report(new vscode.LanguageModelTextPart(rt));
-              }
-              reportedChunks++;
-            }
-            if (choice.tool_calls) {
-              for (const tc of choice.tool_calls) {
-                progress.report(new vscode.LanguageModelToolCallPart(tc.id || `call_${i}`, tc.function?.name || 'unknown', this.safeParseJson(tc.function?.arguments || '{}')));
-                reportedChunks++;
-              }
-            }
-          }
-          if (event.usage) this.recordUsage(event.usage, entry, modelId, modelName);
-          lastProgressReport = Date.now();
-          break;
-        }
-
-        // ── Tool calls ──
-        case 'tool_call':
-        case 'tool_use':
-        case 'function_call': {
-          flushReasoning();
-          const id = event.id || event.callId || event.call_id || `call_${i}`;
-          const name = event.name || event.function?.name || event.toolName || event.tool_name || 'unknown';
-          const args = event.arguments || event.args || event.input || event.function?.arguments || {};
-          progress.report(new vscode.LanguageModelToolCallPart(id, name, typeof args === 'string' ? this.safeParseJson(args) : args));
-          reportedChunks++;
-          break;
-        }
-
-        // ── Tool results (servidor devolviendo resultado de tool) ──
-        case 'tool_result':
-        case 'tool-result': {
-          const body = event.content ?? event.text ?? event.result ?? '';
-          const payload = new TextEncoder().encode(typeof body === 'string' ? body : JSON.stringify(body));
-          progress.report(new vscode.LanguageModelDataPart(payload, 'application/json'));
-          reportedChunks++;
-          break;
-        }
-
-        // ── Uso / tokens ──
-        case 'usage':
-        case 'step-finish':
-        case 'complete':
-        case 'done': {
-          expireReasoning();
-          const tokens = event.tokens ?? event.usage ?? event;
-          if (tokens?.input !== undefined || tokens?.output !== undefined || tokens?.total !== undefined ||
-              tokens?.prompt !== undefined || tokens?.completion !== undefined) {
-            this.recordUsage(tokens, entry, modelId, modelName);
-          }
-          break;
-        }
-
-        // ── Step markers ──
-        case 'step-start':
-        case 'reasoning_start': {
-          expireReasoning();
-          isReasoningBlock = true;
-          reasoningBuffer = '';
-          break;
-        }
-
-        case 'reasoning_end':
-        case 'thinking_done': {
-          flushReasoning();
-          expireReasoning();
-          break;
-        }
-
-        // ── Errores ──
-        case 'error':
-        case 'error_event': {
-          throw new Error(event.text || event.message || event.error || 'Unknown server error');
-        }
-
-        // ── Heartbeat ──
-        case 'status':
-        case 'ping':
-        case 'heartbeat':
-          break;
-
-        // ── Intentar detectar OpenAI delta ──
-        default: {
-          if (event.choices?.[0]?.delta) {
-            const choice = event.choices[0];
-            if (choice.delta.content) {
-              totalText += choice.delta.content;
-              progress.report(new vscode.LanguageModelTextPart(choice.delta.content));
-              reportedChunks++;
-            }
-            if (choice.delta.reasoning_content) {
-              try {
-                const tp = new (vscode as any).LanguageModelThinkingPart(choice.delta.reasoning_content, `reasoner-${Date.now()}`);
-                progress.report(tp);
-              } catch {
-                progress.report(new vscode.LanguageModelTextPart(choice.delta.reasoning_content));
-              }
-              reportedChunks++;
-            }
-            if (choice.delta.tool_calls) {
-              for (const tc of choice.delta.tool_calls) {
-                progress.report(new vscode.LanguageModelToolCallPart(tc.id || `call_${i}`, tc.function?.name || 'unknown', this.safeParseJson(tc.function?.arguments || '{}')));
-                reportedChunks++;
-              }
-            }
-            if (event.usage) this.recordUsage(event.usage, entry, modelId, modelName);
-            lastProgressReport = Date.now();
-          } else if (Array.isArray(event.parts)) {
-            // Evento con sub-parts — procesar recursivamente
-            const sub = await this.processParsedEvents(event.parts, progress, token, entry, modelId, modelName, info);
-            reportedChunks += sub;
-          }
-          break;
-        }
-      }
-
-      // Heartbeat periódico
-      if (reportedChunks > 0 && Date.now() - lastProgressReport > 2500) {
-        progress.report(new vscode.LanguageModelTextPart(''));
-        lastProgressReport = Date.now();
-      }
-    }
-
-    flushReasoning();
-    return reportedChunks;
-  }
-
-  /**
-   * Infiere el tipo de evento cuando no hay campo `type`.
-   */
-  private inferEventType(event: any): string | null {
-    if (!event || typeof event !== 'object') return null;
-    if (event.choices?.[0]?.delta) return 'openai-delta';
-    if (event.choices?.[0]?.content) return 'openai-delta';
-    if (event.id && event.name && (event.arguments || event.args)) return 'tool_call';
-    if (event.tool_calls) return 'openai-delta';
-    if (event.text !== undefined) return 'text';
-    if (event.content !== undefined && !event.choices) return 'text';
-    if (event.delta !== undefined) return 'text';
-    if (event.thinking !== undefined) return 'reasoning';
-    if (event.reasoning !== undefined) return 'reasoning';
-    if (event.tokens && (event.tokens.input || event.tokens.output)) return 'usage';
-    if (event.usage) return 'usage';
-    if (event.message) return 'error';
-    if (event._sseEvent) return event._sseEvent;
-    return null;
-  }
-
-  private safeParseJson(str: string): Record<string, unknown> {
-    try { return JSON.parse(str); } catch { return { raw: str }; }
-  }
-
-  /**
-   * Registra uso de tokens en las estadísticas.
-   */
   private recordUsage(
     tokens: any,
     entry: ServerEntry,

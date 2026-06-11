@@ -1,42 +1,45 @@
 # Changelog
 
+## [3.2.5] - 2026-06-11
+
+### Changed
+- **Streaming REAL vía SDK opencode**: Consumo genuino de SSE en tiempo real usando `@opencode-ai/sdk`. El provider se conecta al endpoint `/global/event` vía `client.global.event()` (AsyncGenerator) y reporta cada `delta` inmediatamente a VS Code como `LanguageModelTextPart` — sin buffering, sin simulación. Ver [v3.2.4](#324---2026-06-11) para la evolución técnica completa.
+- **Flujo asíncrono**: `session.promptAsync()` inicia el procesamiento y retorna inmediatamente; el consumidor SSE corre en paralelo streameando cada chunk al chat de VS Code en tiempo real
+- **Eventos soportados en streaming**: `message.part.updated` (text, reasoning, tool, step-start, step-finish), `message.updated` (errores, finish), `session.error`, `session.idle`
+- **Eliminada simulación**: Removido todo el código de parsing multi-formato (`readAllStreamData`, `processAnyFormatResponse`, `parseSSE`, `parseNDJSON`, `processParsedEvents`, `inferEventType`, `safeParseJson`) — el SDK maneja el protocolo SSE nativamente
+- **Bundle**: esbuild incluye el SDK completo (181KB) con `createOpencodeClient`, `createSseClient`, `promptAsync`, y el parser SSE interno
+
+## [3.2.4] - 2026-06-11
+
+### Changed
+- Transición al SDK opencode para SSE streaming. Implementación final y estable en [v3.2.5](#325---2026-06-11).
+
 ## [3.2.3] - 2026-06-11
 
 ### Fixed
-- **Streaming en OpenCodeServerProvider**: Reescribito el sistema de parsing de respuestas del servidor para soportar múltiples formatos (JSON con `parts[]`, NDJSON, SSE estándar, OpenAI delta). El servidor opencode devuelve JSON plano con array `parts[]`, no SSE — el parser anterior solo aceptaba SSE con `data:` y nunca procesaba la respuesta, dejando el chat en "working" infinitamente.
-- **Parsing multi-formato**: Añadidos 5 detectores de formato que se prueban en cascada: SSE (`event:`/`data:`), NDJSON (JSON por línea), JSON plano con `parts[]`, evento JSON único, y fallback a texto plano
-- **Soporte de eventos completo**: `text`, `reasoning`/`thinking`, `tool_call`/`function_call`, `tool_result`, `usage`/`step-finish` con tracking de tokens, `error`, `step-start`/`reasoning_start`, `ping`/`heartbeat`, y OpenAI delta con `choices[].delta`
-- **Inferencia de tipo**: Cuando el evento no tiene campo `type`, se infiere automáticamente por los campos presentes (`text`, `choices[].delta`, `tool_calls`, etc.)
-- **NDJSON strict**: Ahora no se queda con el primer evento NDJSON si no se puede procesar — cae al siguiente formato
+- Parsing multi-formato de respuestas del servidor (SSE, NDJSON, JSON parts[], OpenAI delta). Obsoleto en v3.2.5 — reemplazado por SDK nativo. Ver [v3.2.4](#324---2026-06-11) para contexto.
 
 ## [3.2.2] - 2026-06-11
 
 ### Fixed
-- **Build errors (CI)**: 11 TypeScript compilation errors that broke `tsc --noEmit`
-  - `modelRegistry.ts`: Añadida propiedad `npmPackage` faltante en `RegistryEntry`; corregido `fmt.endpoint` → `fmt.chatEndpoint`
-  - `multiServerManager.ts`: Reemplazado tipo `HeadersInit` por `Record<string, string>` (no disponible en Node.js); corregido tipo `Promise<any[] | undefined>` con variable intermedia; actualizado `config.password` → `config.hasPassword`
-  - `secretStorage.ts`: Cambiado `password?: string` → `hasPassword?: boolean` en `ServerConfig` (se usaba como flag booleano)
-  - `extension.ts`: Añadido import de `DashboardState` faltante; corregido tipo `boolean` asignado a `password` (string)
-  - `BaseOpenCodeProvider.ts`: `LanguageModelImagePart` no existe en esta API, se usa `(vscode as any)`; `reporter` no definida en scope de `reportThinkingBlock`
-  - `OpenCodeServerProvider.ts`: Eliminada propiedad `vendor` y cambiado `description` → `detail` en objeto `LanguageModelChatInformation`
-  - `subagentTool.ts`: Añadido `toolMode: vscode.LanguageModelChatToolMode.Auto` requerido en opciones
+- 11 TypeScript compilation errors que rompían `tsc --noEmit` en CI. Ver release v3.2.2 para el listado completo de archivos corregidos.
 
 ## [3.2.1] - 2026-06-11
 
 ### Changed
 - **Server launch**: Reemplazado `exec()` con `spawn()` para lanzar servidores locales como proceso background sin ventana `cmd.exe` emergente
 - **Launch UX**: El usuario puede elegir entre lanzar servidor en terminal VS Code o como proceso background invisible
-- **Activation**: Ya no se auto-lanzan servidores locales al activar la extensión — se muestra log en consola indicando que use el comando manual
+- **Activation**: Ya no se auto-lanzan servidores locales al activar la extensión
 
 ### Added
-- **SSE streaming**: Server provider ahora lee respuestas como `text/event-stream` con progreso incremental en lugar de esperar la respuesta completa
+- **SSE streaming inicial**: Server provider lee respuestas como `text/event-stream` con progreso incremental
 - **Server launch command**: Interfaz interactiva con `showQuickPick` para elegir modo de lanzamiento
 
 ## [3.2.0] - 2026-06-02
 
 ### Added
-- **Subagent tool** (`opencode_subagent`): Registered via `vscode.lm.registerTool()`, delegates to first available OpenCode provider. Accepts `query` and `description` parameters. Runs with temperature 0, no additional tools.
-- **Thinking blocks**: Server provider and BaseOpenCodeProvider now use `LanguageModelThinkingPart` for collapsible reasoning content. Falls back to text markers if API unavailable.
+- **Subagent tool** (`opencode_subagent`): Registered via `vscode.lm.registerTool()`, delegates to first available OpenCode provider
+- **Thinking blocks**: Server provider and BaseOpenCodeProvider now use `LanguageModelThinkingPart` for collapsible reasoning content
 
 ### Fixed
 - Tool registration in `package.json` — requires `modelDescription`, `displayName`, and `inputSchema` fields
@@ -44,100 +47,67 @@
 ## [3.1.0] - 2026-06-02
 
 ### Fixed
-- **Server provider session API**: Correct request format for OpenCode server
-  - `model` must be `{ providerID, modelID }` object (not string)
-  - `providerID` comes from server's actual provider data (e.g., `"opencode"`)
-  - Session API only accepts `model` and `parts` — no tools, temperature, etc.
-  - Filter user/assistant messages only (ignore system/tool messages)
+- **Server provider session API**: Correct request format for OpenCode server (`model` como `{ providerID, modelID }`, solo `model` y `parts` en el body)
 
 ## [3.0.0] - 2026-06-02
 
 ### BREAKING CHANGES
-- **models.dev API integration**: Model capabilities (context size, pricing, vision, reasoning) now fetched live from `https://models.dev/api.json` instead of hardcoded metadata
-- **Server provider rewrite**: OpenCode Server now uses session-based API (`POST /session` + `POST /session/:id/message`) instead of non-existent `/chat/completions` endpoint
-- **Single server provider**: All connected servers register under one `opencode-server` vendor instead of one per server
+- **models.dev API integration**: Model capabilities fetched live from `https://models.dev/api.json`
+- **Server provider rewrite**: Usa session-based API (`POST /session` + `POST /session/:id/message`)
+- **Single server provider**: All connected servers register under one `opencode-server` vendor
 
 ### Added
-- **Live model registry**: `modelRegistry.ts` fetches from models.dev on activation with 30-minute cache
-- **40+ Zen models + 16 Go models** with real context sizes, pricing, and capabilities
-- **Pricing in tooltips**: hover over any model shows `In: $X/M · Out: $Y/M · Cache: $Z/M`
-- **Server provider models**: Local servers now appear in Language Models view with correct capabilities
-- **ThinkingEffort configuration**: Reasoning models show `configurationSchema` for low/medium/high
-- **Partial model ID matching**: Handles prefixed IDs (e.g., `opencode/deepseek-v4-flash`)
-- **Debug logging**: Detailed SSE parsing logs in Output panel for troubleshooting
+- **Live model registry**: 40+ Zen models + 16 Go models con context sizes, pricing, y capabilities reales
+- **Pricing in tooltips**: hover muestra `In: $X/M · Out: $Y/M · Cache: $Z/M`
+- **ThinkingEffort configuration**: Reasoning models show `configurationSchema` para low/medium/high
 
 ### Fixed
-- **Image detection too aggressive**: Was matching ANY message part with `mimeType` as image, causing "Image input not supported" for all models. Now only detects actual `LanguageModelImagePart` and `LanguageModelDataPart` with image/* mime types
-- **Tool schema validation**: Filters out tools with empty/undefined schemas that cause 400 errors from strict providers (MiniMax, etc.)
-- **Server provider auth**: `buildHeaders()` made public, auth headers properly sent
-- **Server provider streamResponse**: Fixed ReadableStream vs ReadableStreamDefaultController mismatch
-- **Server provider model registration**: Models now appear in Language Models view after registration
-- **models.dev data loading**: Now blocking (`await`) before provider registration so data is available when VS Code queries models
+- Image detection, tool schema validation, server auth, model registration
 
 ### Removed
-- Anthropic Messages adapter (`anthropicAdapter.ts`) — all models use `/chat/completions` via OpenCode routing
-- OpenAI Responses adapter (`openaiResponsesAdapter.ts`) — all models use `/chat/completions` via OpenCode routing
-- `@vscode-elements/elements` dependency — not usable in webviews
+- Anthropic Messages adapter, OpenAI Responses adapter, `@vscode-elements/elements` dependency
 
 ## [2.4.0] - 2026-06-02
 
 ### Added
 - SDD task specs for multi-provider architecture (8 tasks)
-- `.specs/` directory with task definitions and dependency graph
-
-### Changed
-- TreeView sidebar with Dashboard + Config sections
-- Model registry with fallback static data
+- `.specs/` directory with task definitions y dependency graph
 
 ## [2.3.3] - 2026-06-02
 
 ### Fixed
-- **`/usage` endpoint returns 404** — confirmed locally: `GET /zen/v1/usage` → 404, `/zen/go/v1/usage` → 404. Global tree now gracefully handles missing endpoint and falls back to showing model families instead of hanging
-- **Global tree now shows model families**: when usage API is unavailable, the Global tree still displays available models grouped by family (minimax, kimi, glm, deepseek, qwen, mimo, hy3) with model counts — making the view useful even without billing data
-- `getModelFamilies()` added to `BaseOpenCodeProvider` to expose model group info
-- `refreshGlobal` command now refreshes models + re-fetches global data instead of a separate refresh method
+- **`/usage` endpoint returns 404** — Global tree ahora muestra model families como fallback
 
 ## [2.3.2] - 2026-06-02
 
 ### Changed
-- Added debug logging to `getUsage`: logs URL, HTTP status, response body (or empty/JSON parse error) so we can see exactly what the API returns
-- Added debug logging to `streamResponse`: logs first chunk id/model, reasoning start/done, usage tokens
+- Debug logging en `getUsage` y `streamResponse`
 
 ### Fixed
-- Config tree now uses correct command IDs (was using `opencodeConfigureZen` instead of `opencode-zen.configureZen`)
-- Global tree shows pending/error/ok state per provider instead of hanging
-- `fetchApiUsage` has 8s timeout to prevent tree from hanging forever
+- Config tree command IDs, Global tree state, `fetchApiUsage` timeout de 8s
 
 ## [2.3.0] - 2026-06-02
 
 ### Added
-- **3-tree sidebar layout**: Session (local session stats), Global (API account data from server), Config (quick actions)
-- **Global tree**: fetches real account data from `/usage` endpoint — balance, used, remaining, quota limits per time period (hour/day/week/month). Shows progress bars with percentages and reset timestamps
-- **Config tree**: one-click buttons for Configure Zen Key, Configure Go Key, Refresh All Models, Clear Usage Stats — each as a native tree item with command binding
-- **ApiQuota interface**: `id`, `name`, `unit`, `limit`, `used`, `remaining`, `reset_at`, `period` for granular rate limit display
-- **Context menus**: right-click items in Config/Global trees for relevant actions
-
-### Changed
-- Session tree renamed from `UsageTreeProvider` → `SessionTreeProvider` with cleaner helper methods
+- **3-tree sidebar layout**: Session, Global, Config
+- **Global tree**: fetches real account data from `/usage` endpoint con progress bars
+- **Config tree**: one-click buttons para Configure Zen Key, Configure Go Key, Refresh All Models, Clear Usage Stats
 
 ## [2.2.0] - 2026-06-02
 
 ### Changed
-- **Replaced WebviewView with native TreeView**: usage sidebar now uses VS Code's native `TreeDataProvider` API (like Explorer/Timeline/Outline). No custom HTML/CSS — all rendering uses VS Code's native tree components with proper labels, icons, and collapse states
-- **Sidebar sections**: API Keys, Balance, Session Summary (expandable), By Provider, By Model, Sessions (grouped by sessionId with nested requests), Recent Requests
+- **Replaced WebviewView with native TreeView**: usa VS Code's native `TreeDataProvider` API
 
 ## [2.1.1] - 2026-06-02
 
 ### Fixed
-- **Usage stats blank**: `byModel` and `byProvider` changed from `Map` to plain `Record<string, ...>` so they serialize properly over webview postMessage (Maps were invisible to JSON.stringify)
-- **Thinking rendering**: thinking content is now buffered and emitted as a single block with `[reasoning]...[/reasoning]` markers when reasoning ends, preventing interleaved text output
-- **Webview sessions**: new "Sessions" section groups requests by sessionId with nested request details
+- Usage stats blank (Map → Record), thinking rendering interleaved, webview sessions
 
 ## [2.1.0] - 2026-06-02
 
 ### Changed
-- **Sessions and request tracking**: every request now has a unique `requestId` and belongs to a `sessionId`. Tokens reported for the same requestId are replaced (not accumulated), fixing the token overcount bug where the API reports total tokens per session, not per message
-- **Reasoner steps**: streaming now tracks `reasoner_step` events so the provider collects reasoning steps (label, id, timestamps) per request
+- **Sessions and request tracking**: unique `requestId` y `sessionId`, tokens reemplazados en lugar de acumulados
+- **Reasoner steps**: streaming tracks `reasoner_step` events
 - **Usage tracker keyed by requestId**: `recordRequest(requestId, ...)` finds existing records by requestId and replaces them instead of appending duplicates
 
 ### Fixed

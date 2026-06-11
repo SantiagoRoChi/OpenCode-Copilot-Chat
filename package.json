@@ -115,8 +115,8 @@
         }
       },
       {
-        "vendor": "ollama",
-        "displayName": "Ollama",
+        "vendor": "ollama-plus",
+        "displayName": "Ollama+",
         "configuration": {
           "properties": {
             "baseUrl": {

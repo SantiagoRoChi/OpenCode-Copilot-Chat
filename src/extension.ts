@@ -148,7 +148,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Register Ollama provider
   ollamaProvider = new OllamaProvider();
   context.subscriptions.push(
-    vscode.lm.registerLanguageModelChatProvider('ollama', ollamaProvider)
+    vscode.lm.registerLanguageModelChatProvider('ollama-plus', ollamaProvider)
   );
   context.subscriptions.push(ollamaProvider);
 
@@ -637,7 +637,7 @@ async function updateWebview(): Promise<void> {
       available: s.available,
       models: s.models,
       providerCount: 1,
-      type: 'ollama' as const,
+      type: 'ollama-plus' as const,
     })),
   ];
 

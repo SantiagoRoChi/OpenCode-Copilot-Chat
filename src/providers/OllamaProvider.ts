@@ -45,7 +45,7 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
 
   readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
 
-  public get vendor(): string { return 'ollama'; }
+  public get vendor(): string { return 'ollama-plus'; }
   get displayName(): string { return 'Ollama'; }
 
   constructor() {
@@ -113,7 +113,7 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
       placeholders.push({
         id: `${serverId}:offline`,
         name: `⚠️ ${entry.serverName} (offline)`,
-        vendor: 'ollama',
+        vendor: 'ollama-plus',
         family: 'ollama',
         version: '1',
         maxInputTokens: 0,
@@ -150,7 +150,7 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
           allModels.push({
             id: modelId,
             name: `${info.name} (${entry.serverName})`,
-            vendor: 'ollama',
+            vendor: 'ollama-plus',
             family: info.family || 'unknown',
             version: '1',
             maxInputTokens: info.maxContextLength,

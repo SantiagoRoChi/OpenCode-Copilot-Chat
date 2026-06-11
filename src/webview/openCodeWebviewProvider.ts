@@ -9,7 +9,7 @@ export interface ServerData {
   available: boolean;
   models: string[];
   providerCount: number;
-  type?: 'opencode' | 'lmstudio' | 'ollama';
+  type?: 'opencode' | 'lmstudio' | 'ollama-plus';
 }
 
 export interface DashboardState {

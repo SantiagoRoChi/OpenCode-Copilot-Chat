@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.2.3] - 2026-06-11
+
+### Fixed
+- **Streaming en OpenCodeServerProvider**: Reescribito el sistema de parsing de respuestas del servidor para soportar múltiples formatos (JSON con `parts[]`, NDJSON, SSE estándar, OpenAI delta). El servidor opencode devuelve JSON plano con array `parts[]`, no SSE — el parser anterior solo aceptaba SSE con `data:` y nunca procesaba la respuesta, dejando el chat en "working" infinitamente.
+- **Parsing multi-formato**: Añadidos 5 detectores de formato que se prueban en cascada: SSE (`event:`/`data:`), NDJSON (JSON por línea), JSON plano con `parts[]`, evento JSON único, y fallback a texto plano
+- **Soporte de eventos completo**: `text`, `reasoning`/`thinking`, `tool_call`/`function_call`, `tool_result`, `usage`/`step-finish` con tracking de tokens, `error`, `step-start`/`reasoning_start`, `ping`/`heartbeat`, y OpenAI delta con `choices[].delta`
+- **Inferencia de tipo**: Cuando el evento no tiene campo `type`, se infiere automáticamente por los campos presentes (`text`, `choices[].delta`, `tool_calls`, etc.)
+- **NDJSON strict**: Ahora no se queda con el primer evento NDJSON si no se puede procesar — cae al siguiente formato
+
 ## [3.2.2] - 2026-06-11
 
 ### Fixed

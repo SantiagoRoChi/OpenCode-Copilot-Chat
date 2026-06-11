@@ -1,4 +1,5 @@
 out/
+out-test/
 node_modules/
 *.vsix
 dist/
@@ -7,3 +8,5 @@ dist/
 .agents/
 skills-lock.json
 .vscode-test-web/
+src/**/*.js
+src/**/*.js.map

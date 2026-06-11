@@ -280,8 +280,8 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
       }
 
       // Emitir en orden: reasoning → tools → text
-      // Usamos yield al event loop entre cada report para que VS Code
-      // procese el chunk y actualice el UI ANTES de que la función termine.
+      // Cedemos al event loop entre cada chunk para que VS Code
+      // procese el progress.report() y actualice el chat UI.
       const yieldLoop = () => new Promise<void>(r => setTimeout(r, 0));
 
       if (reasoningText) {
@@ -302,7 +302,12 @@ export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider 
       // Si no hay nada, enviar un part vacío para cerrar el "working"
       if (!reasoningText && toolCalls.length === 0 && !totalText) {
         progress.report(new vscode.LanguageModelTextPart(''));
+        await yieldLoop();
       }
+
+      // CRÍTICO: Esperar a que VS Code procese todos los chunks antes de
+      // que la función termine. Si no, VS Code se queda "working" para siempre.
+      await new Promise(r => setTimeout(r, 150));
 
       this.outputChannel.appendLine(`[${entry.serverName}] Response complete (${totalText.length} chars, ${reasoningText.length} reasoning, ${toolCalls.length} tools)`);
 

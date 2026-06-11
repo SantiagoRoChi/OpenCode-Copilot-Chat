@@ -2,17 +2,23 @@
 
 ## [3.2.5] - 2026-06-11
 
-### Changed
-- **Streaming REAL vía SDK opencode**: Consumo genuino de SSE en tiempo real usando `@opencode-ai/sdk`. El provider se conecta al endpoint `/global/event` vía `client.global.event()` (AsyncGenerator) y reporta cada `delta` inmediatamente a VS Code como `LanguageModelTextPart` — sin buffering, sin simulación. Ver [v3.2.4](#324---2026-06-11) para la evolución técnica completa.
-- **Flujo asíncrono**: `session.promptAsync()` inicia el procesamiento y retorna inmediatamente; el consumidor SSE corre en paralelo streameando cada chunk al chat de VS Code en tiempo real
-- **Eventos soportados en streaming**: `message.part.updated` (text, reasoning, tool, step-start, step-finish), `message.updated` (errores, finish), `session.error`, `session.idle`
-- **Eliminada simulación**: Removido todo el código de parsing multi-formato (`readAllStreamData`, `processAnyFormatResponse`, `parseSSE`, `parseNDJSON`, `processParsedEvents`, `inferEventType`, `safeParseJson`) — el SDK maneja el protocolo SSE nativamente
-- **Bundle**: esbuild incluye el SDK completo (181KB) con `createOpencodeClient`, `createSseClient`, `promptAsync`, y el parser SSE interno
+### Added
+- **Tests reales con datos del servidor**: 24 tests pasando validados contra respuestas reales del servidor opencode (127.0.0.1:4096).
+  - `test/OpenCodeServerProvider.test.ts` — 15 tests: extracción de texto/reasoning/tokens de `parts[]`, manejo de errores, respuestas vacías, tool calls, validación de estructura JSON, simulación de orden de eventos streaming
+  - `test/OpenCodeServerProvider.streaming.test.ts` — 9 tests: orden reasoning→texto, concatenación de múltiples text parts, cancelación de token, manejo de tool calls, respuesta vacía
+  - Framework: `node:test` + `tsx` (sin jest/mocha). Mock de VS Code API en `test/mocks/vscode.mock.ts`
+
+### Fixed
+- **Chat se queda "working" infinitamente**: Simplificado `OpenCodeServerProvider` para procesar la respuesta JSON del servidor de forma directa y limpia. Ahora: `fetch()` → `await response.json()` → acumular `parts[]` → emitir `progress.report()` con `yield` al event loop entre cada chunk para que VS Code actualice el UI.
+- **Eliminada simulación por delays**: Removido todo el código de parsing multi-formato con delays artificiales de 50ms (`readAllStreamData`, `processAnyFormatResponse`, `parseSSE`, `parseNDJSON`, `processParsedEvents`, `inferEventType`, `safeParseJson`).
+- **Eliminada dependencia `@opencode-ai/sdk`**: El intento de usar el SDK para SSE streaming no funcionó porque el servidor no emite eventos de contenido en tiempo real vía `/global/event`. El SDK fue removido del bundle (tree-shaking). Bundle bajó de 177KB a 105KB.
+- **Manejo de respuesta limpio**: Acumula reasoning, tool calls y texto por separado, luego los emite en orden (reasoning → tools → text) con `await new Promise(r => setTimeout(r, 0))` entre cada uno para ceder al event loop.
+- **Manejo de errores**: Verificación de `messageData.error` a nivel top-level antes de procesar `parts[]`.
 
 ## [3.2.4] - 2026-06-11
 
 ### Changed
-- Transición al SDK opencode para SSE streaming. Implementación final y estable en [v3.2.5](#325---2026-06-11).
+- Intento de integración con SDK `@opencode-ai/sdk` para SSE streaming. Descartado — el servidor no emite eventos de contenido en tiempo real. Solución final en [v3.2.5](#325---2026-06-11).
 
 ## [3.2.3] - 2026-06-11
 

@@ -7,6 +7,8 @@ import { formatUsageOutput } from './usage/UsageTracker';
 import { OpenCodeConnector } from './integration/opencodeConnector';
 import { SecretStorage } from './config/secretStorage';
 import { OpenCodeServerProvider } from './providers/OpenCodeServerProvider';
+import { LMStudioProvider } from './providers/LMStudioProvider';
+import { OllamaProvider } from './providers/OllamaProvider';
 import { MultiServerManager, initMultiServerManager } from './client/multiServerManager';
 import { OpenCodeTreeProvider } from './treeview/openCodeTreeProvider';
 import { initModelRegistry, getRegistrySize } from './client/modelRegistry';
@@ -23,6 +25,8 @@ let connector: OpenCodeConnector;
 let secretStorage: SecretStorage;
 let serverManager: MultiServerManager;
 let serverProvider: OpenCodeServerProvider;
+let lmStudioProvider: LMStudioProvider;
+let ollamaProvider: OllamaProvider;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   console.log('OpenCode Zen: activating...');
@@ -119,6 +123,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       connected: true,
     });
   }
+
+  // Register LM Studio provider
+  lmStudioProvider = new LMStudioProvider();
+  context.subscriptions.push(
+    vscode.lm.registerLanguageModelChatProvider('lmstudio', lmStudioProvider)
+  );
+  context.subscriptions.push(lmStudioProvider);
+
+  // Register Ollama provider
+  ollamaProvider = new OllamaProvider();
+  context.subscriptions.push(
+    vscode.lm.registerLanguageModelChatProvider('ollama', ollamaProvider)
+  );
+  context.subscriptions.push(ollamaProvider);
 
   context.subscriptions.push(
     vscode.lm.registerLanguageModelChatProvider('opencode-free', freeProvider),

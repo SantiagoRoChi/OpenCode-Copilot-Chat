@@ -1,8 +1,8 @@
 {
-  "name": "opencode-zen-copilot",
-  "displayName": "OpenCode Zen for Copilot",
-  "description": "Access OpenCode Zen models in GitHub Copilot Chat — free models included",
-  "version": "3.2.5",
+  "name": "plus-providers-copilot-chat",
+  "displayName": "+ Providers on Copilot Chat",
+  "description": "Connect LM Studio, Ollama, and OpenCode servers to GitHub Copilot Chat — local and remote AI models",
+  "version": "3.3.0",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -19,15 +19,20 @@
     "Chat"
   ],
   "keywords": [
+    "lmstudio",
+    "ollama",
     "opencode",
-    "zen",
-    "go",
-    "free",
-    "models",
+    "local-ai",
+    "self-hosted",
+    "remote-server",
     "copilot",
     "ai",
     "llm",
-    "chat"
+    "chat",
+    "models",
+    "reasoning",
+    "vision",
+    "tools"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -41,7 +46,8 @@
     "test-compile": "tsc -p ./",
     "lint": "eslint \"src/**/*.ts\"",
     "test-build": "tsc -p tsconfig.test.json",
-    "test": "npm run test-build && node --test \"out-test/__tests__/*.test.js\"",
+    "test": "vscode-test",
+    "test:node": "npx tsx test/provider-behavior.test.ts",
     "deploy": "vsce publish --no-yarn",
     "package": "vsce package --no-yarn"
   },
@@ -93,6 +99,34 @@
         "vendor": "opencode-server",
         "displayName": "OpenCode Servers",
         "configuration": {}
+      },
+      {
+        "vendor": "lmstudio",
+        "displayName": "LM Studio",
+        "configuration": {
+          "properties": {
+            "baseUrl": {
+              "type": "string",
+              "title": "LM Studio Server URL",
+              "description": "Base URL of your LM Studio server (e.g. http://localhost:1234)",
+              "default": "http://localhost:1234"
+            }
+          }
+        }
+      },
+      {
+        "vendor": "ollama",
+        "displayName": "Ollama",
+        "configuration": {
+          "properties": {
+            "baseUrl": {
+              "type": "string",
+              "title": "Ollama Server URL",
+              "description": "Base URL of your Ollama server (e.g. http://localhost:11434)",
+              "default": "http://localhost:11434"
+            }
+          }
+        }
       }
     ],
     "languageModelTools": [
@@ -264,6 +298,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.120.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.24.0",
     "sharp": "^0.34.5",

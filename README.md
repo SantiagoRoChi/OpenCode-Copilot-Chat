@@ -1,53 +1,123 @@
-# OpenCode Zen for Copilot
+# + Providers on Copilot Chat
 
 <p align="center">
-  <strong>Accede a modelos OpenCode en GitHub Copilot Chat — 4 providers, 80+ modelos, precios en tiempo real</strong>
+  <strong>Connect LM Studio, Ollama, and OpenCode to GitHub Copilot Chat — local and remote AI models</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/VS%20Code-1.120+-blue.svg" alt="VS Code Version">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-3.1.0-green.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-3.3.0-green.svg" alt="Version">
 </p>
 
 <p align="center">
-  <a href="https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat/releases/latest">📥 Descargar VSIX</a>
+  <a href="https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat/releases/latest">📥 Download VSIX</a>
   ·
   <a href="https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat">GitHub</a>
   ·
-  <a href="https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat/issues">Reportar Bug</a>
+  <a href="https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat/issues">Report Bug</a>
 </p>
 
 ---
 
-Extensión para VS Code que registra modelos de [OpenCode Zen](https://opencode.ai) como proveedores de Language Model para GitHub Copilot Chat.
+VS Code extension that registers **LM Studio**, **Ollama**, and **OpenCode** as Language Model providers for GitHub Copilot Chat. Use your own local or remote AI models directly in Copilot Chat.
 
-## ✨ Características Principales
+## ✨ Supported Providers
 
-### 4 Proveedores Independientes
+| Provider | Connection | Models | Features |
+|----------|-----------|--------|----------|
+| **LM Studio** | Local or Remote | Auto-detected from `/v1/models` | Streaming, Reasoning, Vision, Tools |
+| **Ollama** | Local or Remote | Auto-detected from `/api/tags` | Streaming, Reasoning, Vision, Tools |
+| **OpenCode Free** | Cloud | 4+ | DeepSeek V4 Flash Free, MiMo V2.5 Free, Nemotron 3 Super Free |
+| **OpenCode Go** | Cloud | 16+ | Kimi K2.5/K2.6, DeepSeek V4 Pro/Flash, GLM 5/5.1, MiMo, MiniMax, Qwen |
+| **OpenCode Zen** | Cloud | 66+ | GPT 5.x, Claude Opus/Sonnet/Haiku, Gemini 3.x, Kimi, DeepSeek, GLM, Grok |
+| **OpenCode Servers** | Local or Remote | ∞ | Any model configured in your OpenCode server |
 
-| Provider | Modelos | Descripción |
-|----------|---------|-------------|
-| **OpenCode Free** | 4+ | DeepSeek V4 Flash Free, MiMo V2.5 Free, Nemotron 3 Super Free, Big Pickle |
-| **OpenCode Go** | 16 | Kimi K2.5/K2.6, DeepSeek V4 Pro/Flash, GLM 5/5.1, MiMo, MiniMax, Qwen |
-| **OpenCode Zen** | 66 | GPT 5.x, Claude Opus/Sonnet/Haiku, Gemini 3.x, Kimi, DeepSeek, GLM, Grok |
-| **OpenCode Servers** | ∞ | Modelos de servidores OpenCode locales o remotos |
+## 🔌 How to Connect
 
-### Modelos en Tiempo Real desde models.dev
+### LM Studio (Local or Remote)
 
-- **Context sizes reales**: GPT-5.5 (1.05M), Claude Opus (1M), DeepSeek V4 (1M)
-- **Pricing en tooltips**: hover sobre cualquier modelo muestra `In: $X/M · Out: $Y/M · Cache: $Z/M`
-- **Capabilities**: Vision, Tools, Reasoning detectados automáticamente
-- **Cache TTL 30 minutos**: datos frescos sin recargar la extensión
+1. Install [LM Studio](https://lmstudio.ai) and start the local server (default port `1234`)
+2. Or use a remote LM Studio instance
+3. The extension auto-detects all loaded models with their capabilities
 
-### Servidores OpenCode Locales
+**Configuration**: `settings.json`
+```json
+{
+  "lmstudio.baseUrl": "http://localhost:1234"
+}
+```
 
-- Detección automática de `opencode serve`
-- Conexión a múltiples servidores simultáneamente
-- Cada servidor aparece como "Model Name (ServerName)" en el selector
-- Auth básica soportada (`OPENCODE_SERVER_PASSWORD`)
-- API session-based: `POST /session` + `POST /session/:id/message`
+### Ollama (Local or Remote)
+
+1. Install [Ollama](https://ollama.com) and pull models: `ollama pull llama3.1`
+2. Start Ollama server (default port `11434`)
+3. Or use a remote Ollama instance
+4. The extension auto-detects all pulled models with their capabilities
+
+**Configuration**: `settings.json`
+```json
+{
+  "ollama.baseUrl": "http://localhost:11434"
+}
+```
+
+### OpenCode Servers (Local or Remote)
+
+1. Install [OpenCode CLI](https://opencode.ai): `npm install -g opencode`
+2. Start server: `opencode serve` (default port `4096`)
+3. Or connect to a remote OpenCode server
+4. Add server via command palette: `+ Providers: Add Server`
+
+**Features**:
+- Multiple servers simultaneously
+- Basic auth support (`OPENCODE_SERVER_PASSWORD`)
+- Session-based API: `POST /session` + `POST /session/:id/message`
+
+### OpenCode Cloud (Free/Go/Zen)
+
+1. Get API key at [opencode.ai/auth](https://opencode.ai/auth)
+2. Configure via command palette: `+ Providers: Configure Zen/Go/Free`
+
+## 🧠 Model Capabilities Detection
+
+The extension automatically detects model capabilities:
+
+- **Reasoning**: DeepSeek, Qwen3, models with "reasoning" or "think" in name
+- **Vision**: LLaVA, models with "vision" or "vl" in name
+- **Tools**: Qwen, Llama3, models with "tool" or "function" in name
+- **Context Length**: Heuristic based on model size (7B→8K, 13B→32K, 70B→128K)
+
+## 🌐 Remote Servers
+
+All local providers (LM Studio, Ollama, OpenCode Servers) support remote connections:
+
+```json
+{
+  "lmstudio.baseUrl": "http://192.168.1.100:1234",
+  "ollama.baseUrl": "http://my-server:11434"
+}
+```
+
+## 📦 Installation
+
+### From VS Code Marketplace
+Search for "+ Providers on Copilot Chat" in the Extensions panel.
+
+### From VSIX
+1. Download `.vsix` from [Releases](https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat/releases)
+2. Run: `code --install-extension plus-providers-copilot-chat-3.3.0.vsix`
+
+## 🛠️ Requirements
+
+- VS Code 1.120.0+
+- GitHub Copilot Chat extension
+- For local models: LM Studio, Ollama, or OpenCode CLI running
+
+## 📝 Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ### ThinkingEffort
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## [3.3.0] - 2026-06-11
+
+### Added
+- **LM Studio Provider**: Nuevo provider para conectar LM Studio local o remoto
+  - Auto-detección de modelos vía `/v1/models`
+  - Detección de capacidades: Reasoning, Vision, Tools
+  - Streaming SSE real con chunks progresivos
+  - Soporte para múltiples servidores LM Studio
+  - Heurísticas de context length basadas en tamaño del modelo
+- **Ollama Provider**: Nuevo provider para conectar Ollama local o remoto
+  - Auto-detección de modelos vía `/api/tags`
+  - Detección de capacidades: Reasoning, Vision, Tools
+  - Streaming NDJSON con chunks progresivos
+  - Soporte para múltiples servidores Ollama
+  - Heurísticas de context length basadas en parameter_size
+- **Rebranding**: Extensión renombrada a "+ Providers on Copilot Chat"
+  - Nuevo nombre: `plus-providers-copilot-chat`
+  - Nuevas keywords: lmstudio, ollama, local-ai, self-hosted, remote-server
+  - README actualizado con documentación de todos los providers
+  - Soporte para conexiones remotas en todos los providers locales
+
+### Changed
+- **package.json**: Actualizado displayName, description, keywords
+- **README.md**: Documentación completa de LM Studio, Ollama, OpenCode Servers, y OpenCode Cloud
+
 ## [3.2.5] - 2026-06-11
 
 ### Added
@@ -12,7 +37,13 @@
     - Verifica reasoning en respuesta compleja (matemáticas)
     - Valida estructura JSON: step-start → reasoning → text → step-finish
     - Usa provider `lm-studiolocal` configurado en opencode → http://localhost:1234/v1
-  - Framework: `node:test` + `tsx` (sin jest/mocha). Mock de VS Code API en `test/mocks/vscode.mock.ts`
+  - `test/provider-behavior.test.ts` — 4 tests HONESTOS del comportamiento REAL:
+    - Documenta que el servidor opencode devuelve JSON completo (NO SSE/streaming)
+    - El provider acumula parts[] y emite al final con yield al event loop
+    - 100 parts se procesan en ~165ms (si fuera streaming real tardaría 10-20s)
+    - Valida estructura JSON real del servidor: step-start → reasoning → text → step-finish
+    - Documenta la diferencia: opencode (JSON completo) vs LMStudio (SSE real)
+  - Framework: `node:test` + `tsx` (sin jest/mocha)
 
 ### Fixed
 - **Chat se queda "working" infinitamente**: Simplificado `OpenCodeServerProvider` para procesar la respuesta JSON del servidor de forma directa y limpia. Ahora: `fetch()` → `await response.json()` → acumular `parts[]` → emitir `progress.report()` con `yield` al event loop entre cada chunk para que VS Code actualice el UI.

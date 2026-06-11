@@ -242,6 +242,74 @@ function registerCommands(context: vscode.ExtensionContext): void {
   };
 
   const addServer = async () => {
+    // Step 1: Select server type
+    const serverType = await vscode.window.showQuickPick(
+      [
+        { label: '$(server) OpenCode Server', description: 'Connect to an OpenCode server instance', value: 'opencode' },
+        { label: '$(chip) LM Studio', description: 'Connect to LM Studio local server', value: 'lmstudio' },
+        { label: '$(zap) Ollama', description: 'Connect to Ollama local server', value: 'ollama' },
+      ],
+      { placeHolder: 'Select the type of server to add', ignoreFocusOut: true }
+    );
+    if (!serverType) return;
+
+    const type = (serverType as any).value;
+
+    if (type === 'lmstudio') {
+      const name = await vscode.window.showInputBox({
+        title: 'LM Studio Server Name',
+        prompt: 'Display name for this LM Studio server',
+        placeHolder: 'My LM Studio',
+        value: 'Local LM Studio',
+        ignoreFocusOut: true,
+      });
+      if (name === undefined) return;
+
+      const url = await vscode.window.showInputBox({
+        title: 'LM Studio URL',
+        prompt: 'Base URL for LM Studio API',
+        placeHolder: 'http://localhost:1234',
+        value: 'http://localhost:1234',
+        ignoreFocusOut: true,
+      });
+      if (url === undefined) return;
+
+      const baseUrl = (url || 'http://localhost:1234').replace(/\/$/, '');
+      const serverId = `lmstudio-${randomUUID().slice(0, 8)}`;
+
+      lmStudioProvider.addServer(serverId, name, baseUrl);
+      vscode.window.showInformationMessage(`LM Studio server "${name}" added.`);
+      return;
+    }
+
+    if (type === 'ollama') {
+      const name = await vscode.window.showInputBox({
+        title: 'Ollama Server Name',
+        prompt: 'Display name for this Ollama server',
+        placeHolder: 'My Ollama',
+        value: 'Local Ollama',
+        ignoreFocusOut: true,
+      });
+      if (name === undefined) return;
+
+      const url = await vscode.window.showInputBox({
+        title: 'Ollama URL',
+        prompt: 'Base URL for Ollama API',
+        placeHolder: 'http://localhost:11434',
+        value: 'http://localhost:11434',
+        ignoreFocusOut: true,
+      });
+      if (url === undefined) return;
+
+      const baseUrl = (url || 'http://localhost:11434').replace(/\/$/, '');
+      const serverId = `ollama-${randomUUID().slice(0, 8)}`;
+
+      ollamaProvider.addServer(serverId, name, baseUrl);
+      vscode.window.showInformationMessage(`Ollama server "${name}" added.`);
+      return;
+    }
+
+    // OpenCode Server (default)
     const name = await vscode.window.showInputBox({
       title: 'Server Name', prompt: 'Display name for this server', placeHolder: 'My OpenCode Server', ignoreFocusOut: true,
     });

@@ -3,9 +3,15 @@
 ## [3.2.5] - 2026-06-11
 
 ### Added
-- **Tests reales con datos del servidor**: 24 tests pasando validados contra respuestas reales del servidor opencode (127.0.0.1:4096).
+- **Tests reales con datos del servidor**: 30 tests pasando validados contra respuestas reales.
   - `test/OpenCodeServerProvider.test.ts` — 15 tests: extracción de texto/reasoning/tokens de `parts[]`, manejo de errores, respuestas vacías, tool calls, validación de estructura JSON, simulación de orden de eventos streaming
   - `test/OpenCodeServerProvider.streaming.test.ts` — 9 tests: orden reasoning→texto, concatenación de múltiples text parts, cancelación de token, manejo de tool calls, respuesta vacía
+  - `test/opencode-server.integration.test.ts` — 6 tests de integración REAL con servidor opencode + LMStudio:
+    - Verifica health del servidor, crea sesión, envía mensajes
+    - Tarea pesada: genera 900+ chars con 28K tokens en 22s
+    - Verifica reasoning en respuesta compleja (matemáticas)
+    - Valida estructura JSON: step-start → reasoning → text → step-finish
+    - Usa provider `lm-studiolocal` configurado en opencode → http://localhost:1234/v1
   - Framework: `node:test` + `tsx` (sin jest/mocha). Mock de VS Code API en `test/mocks/vscode.mock.ts`
 
 ### Fixed

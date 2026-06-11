@@ -250,17 +250,28 @@ export class MultiServerManager {
 
   async launchServer(config: ServerConfig): Promise<boolean> {
     try {
-      const { exec } = require('child_process') as typeof import('child_process');
-      const { promisify } = require('util') as { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> };
-      const execAsync = promisify(exec);
+      const { spawn } = require('child_process') as typeof import('child_process');
 
       const host = config.url.replace(/^https?:\/\//, '');
-      const cmd = `start opencode serve --host ${host} --port ${config.port}`;
-      await execAsync(cmd, { shell: 'cmd.exe' });
+      const args = ['serve', '--host', host, '--port', String(config.port)];
 
-      await new Promise<void>((resolve) => setTimeout(resolve, 3000));
-      const connected = await this.reconnect(config.id);
-      return connected !== undefined;
+      // Ejecutar como proceso background sin ventana (no más cmd.exe popup)
+      const child = spawn('opencode', args, {
+        detached: true,
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+
+      // Esperar a que el servidor arranque
+      let attempts = 0;
+      while (attempts < 10) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+        const connected = await this.reconnect(config.id);
+        if (connected !== undefined) return true;
+        attempts++;
+      }
+      return false;
     } catch {
       return false;
     }

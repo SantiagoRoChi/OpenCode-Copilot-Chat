@@ -91,17 +91,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const localConfigs = (await secretStorage.getServerConfigs()).filter(c => c.isLocal && c.enabled);
   const localNotRunning = localConfigs.filter(c => !connectedList.some(conn => conn.config.id === c.id));
 
+  // No auto-lanzamos servidores locales al activar — el usuario debe hacerlo manualmente
+  // para evitar abrir ventanas de terminal inesperadas.
   if (localNotRunning.length > 0) {
-    for (const localConfig of localNotRunning) {
-      const launched = await serverManager.launchServer(localConfig);
-      if (launched) {
-        vscode.window.showInformationMessage(`OpenCode local server launched on ${localConfig.url}:${localConfig.port}`).then();
-        break;
-      }
-    }
-    await serverManager.connectAll();
+    console.log(
+      `OpenCode Zen: Local server(s) configured but not running: ${localNotRunning.map(c => c.name).join(', ')}. ` +
+      `Use "OpenCode Zen: Launch Server" to start them.`
+    );
   } else if (connectedList.length > 0) {
-    vscode.window.showInformationMessage(`OpenCode: ${connectedList.length} server(s) connected.`).then();
+    console.log(`OpenCode Zen: ${connectedList.length} server(s) connected.`);
   }
 
   // Register single server provider for ALL connected servers
@@ -366,11 +364,42 @@ function registerCommands(context: vscode.ExtensionContext): void {
     const config = configs.find(c => c.id === serverId);
     if (!config) return;
 
-    const launched = await serverManager.launchServer(config);
-    if (launched) {
-      vscode.window.showInformationMessage(`Server "${config.name}" launched.`);
+    // Ofrecer elegir entre terminal VS Code o proceso background
+    const mode = await vscode.window.showQuickPick(
+      [
+        { label: 'Background process (no visible terminal)', description: 'Recomendado' },
+        { label: 'VS Code terminal', description: 'Visible en el panel de terminal' },
+      ],
+      { placeHolder: `How to launch "${config.name}"?` }
+    );
+    if (!mode) return;
+
+    if (mode.label === 'VS Code terminal') {
+      const host = config.url.replace(/^https?:\/\//, '');
+      const terminal = vscode.window.createTerminal({
+        name: config.name,
+        message: `opencode serve --host ${host} --port ${config.port}`,
+      });
+      terminal.sendText(`opencode serve --host ${host} --port ${config.port}`);
+      terminal.show();
+      // Esperar a que arranque
+      for (let i = 0; i < 15; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const reconnected = await serverManager.reconnect(config.id);
+        if (reconnected) {
+          vscode.window.showInformationMessage(`Server "${config.name}" launched in terminal.`);
+          void updateWebview();
+          return;
+        }
+      }
+      vscode.window.showWarningMessage(`Could not connect to "${config.name}". Check the terminal for errors.`);
     } else {
-      vscode.window.showWarningMessage(`Could not launch "${config.name}". Make sure opencode is in your PATH.`);
+      const launched = await serverManager.launchServer(config);
+      if (launched) {
+        vscode.window.showInformationMessage(`Server "${config.name}" launched (background process).`);
+      } else {
+        vscode.window.showWarningMessage(`Could not launch "${config.name}". Make sure opencode is in your PATH.`);
+      }
     }
     void updateWebview();
   };

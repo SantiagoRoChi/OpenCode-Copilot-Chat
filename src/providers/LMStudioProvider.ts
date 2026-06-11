@@ -245,48 +245,44 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
     const modelInfo = this.modelInfoMap.get(model.id);
 
     try {
-      // Convert messages to LM Studio native format
-      const input: any[] = [];
-      let systemPrompt = '';
+      // Convert messages to OpenAI format (LM Studio compatible)
+      const openaiMessages: any[] = [];
 
       for (const msg of messages) {
         const role = msg.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant' : 'user';
-        const content = msg.content
+        const textParts = msg.content
           .filter(part => part instanceof vscode.LanguageModelTextPart)
           .map(part => (part as vscode.LanguageModelTextPart).value)
           .join('');
 
-        if (role === 'assistant') {
-          input.push({ type: 'message', role: 'assistant', content });
-        } else {
-          // Check for images in user messages
-          const imageParts = msg.content.filter(part => part instanceof vscode.LanguageModelDataPart);
-          if (imageParts.length > 0) {
-            const items: any[] = [{ type: 'text', text: content }];
-            for (const img of imageParts) {
-              const dataPart = img as vscode.LanguageModelDataPart;
-              if (dataPart.data && dataPart.mimeType) {
-                const base64 = Buffer.from(dataPart.data).toString('base64');
-                items.push({
-                  type: 'image',
-                  data_url: `data:${dataPart.mimeType};base64,${base64}`,
-                });
-              }
+        const imageParts = msg.content.filter(part => part instanceof vscode.LanguageModelDataPart);
+
+        if (imageParts.length > 0 && role === 'user') {
+          // Multi-modal message with images
+          const content: any[] = [{ type: 'text', text: textParts }];
+          for (const img of imageParts) {
+            const dataPart = img as vscode.LanguageModelDataPart;
+            if (dataPart.data && dataPart.mimeType) {
+              const base64 = Buffer.from(dataPart.data).toString('base64');
+              content.push({
+                type: 'image_url',
+                image_url: { url: `data:${dataPart.mimeType};base64,${base64}` },
+              });
             }
-            input.push({ type: 'message', role: 'user', content: items });
-          } else {
-            input.push({ type: 'message', role: 'user', content });
           }
+          openaiMessages.push({ role, content });
+        } else {
+          openaiMessages.push({ role, content: textParts });
         }
       }
 
       const abortController = new AbortController();
       token.onCancellationRequested(() => abortController.abort());
 
-      // Build LM Studio native request body
+      // Build OpenAI-compatible request body
       const requestBody: any = {
         model: modelId,
-        input,
+        messages: openaiMessages,
         stream: true,
       };
 
@@ -301,13 +297,14 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
             } else if (key === 'top_p') {
               requestBody.top_p = value;
             } else if (key === 'reasoning') {
-              // LM Studio reasoning: { enabled: true } or { level: 'low'|'medium'|'high' }
+              // Pass reasoning as extra_body for LM Studio
+              if (!requestBody.extra_body) requestBody.extra_body = {};
               if (typeof value === 'boolean') {
-                requestBody.reasoning = { enabled: value };
+                requestBody.extra_body.reasoning = { enabled: value };
               } else if (typeof value === 'string') {
-                requestBody.reasoning = { level: value };
+                requestBody.extra_body.reasoning = { level: value };
               } else if (typeof value === 'object') {
-                requestBody.reasoning = value;
+                requestBody.extra_body.reasoning = value;
               }
             } else {
               requestBody[key] = value;
@@ -325,17 +322,18 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
       }
 
       // Enable reasoning if model supports it and user hasn't explicitly disabled it
-      if (modelInfo?.supportsReasoning && !requestBody.reasoning) {
+      if (modelInfo?.supportsReasoning && !requestBody.extra_body?.reasoning) {
         const defaultLevel = modelInfo.reasoningDefault || 'on';
+        if (!requestBody.extra_body) requestBody.extra_body = {};
         if (defaultLevel === 'on' || defaultLevel === 'low' || defaultLevel === 'medium' || defaultLevel === 'high') {
-          requestBody.reasoning = { level: defaultLevel };
+          requestBody.extra_body.reasoning = { level: defaultLevel };
         } else {
-          requestBody.reasoning = { enabled: true };
+          requestBody.extra_body.reasoning = { enabled: true };
         }
       }
 
-      // Use LM Studio native streaming API
-      const response = await fetch(`${entry.baseUrl}/api/v1/chat`, {
+      // Use OpenAI-compatible streaming API (reliable and well-tested)
+      const response = await fetch(`${entry.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
@@ -351,11 +349,10 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
         throw new Error('No response body for streaming');
       }
 
-      // Process LM Studio SSE stream with named events
+      // Process standard OpenAI SSE stream
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let inReasoning = false;
 
       try {
         while (true) {
@@ -366,49 +363,28 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
 
-          let currentEvent = '';
           for (const line of lines) {
             const trimmed = line.trim();
-            if (!trimmed) {
-              currentEvent = '';
-              continue;
-            }
+            if (!trimmed || trimmed === 'data: [DONE]') continue;
 
-            if (trimmed.startsWith('event: ')) {
-              currentEvent = trimmed.slice(7);
-            } else if (trimmed.startsWith('data: ')) {
+            if (trimmed.startsWith('data: ')) {
               try {
                 const data = JSON.parse(trimmed.slice(6));
+                const delta = data.choices?.[0]?.delta;
 
-                switch (currentEvent) {
-                  case 'reasoning.start':
-                    inReasoning = true;
-                    break;
-                  case 'reasoning.delta':
-                    if (data.delta) {
-                      progress.report(new vscode.LanguageModelTextPart(data.delta));
-                    }
-                    break;
-                  case 'reasoning.end':
-                    inReasoning = false;
-                    break;
-                  case 'message.delta':
-                    if (data.delta) {
-                      progress.report(new vscode.LanguageModelTextPart(data.delta));
-                    }
-                    break;
-                  case 'error':
-                    throw new Error(data.message || 'LM Studio streaming error');
-                  case 'chat.end':
-                    // Stream complete
-                    break;
+                if (delta?.content) {
+                  progress.report(new vscode.LanguageModelTextPart(delta.content));
                 }
-              } catch (parseErr) {
-                if (parseErr instanceof Error && !parseErr.message.includes('LM Studio streaming error')) {
-                  // Skip malformed lines
-                } else {
-                  throw parseErr;
+
+                if (delta?.reasoning_content) {
+                  progress.report(new vscode.LanguageModelTextPart(`[reasoning]\n${delta.reasoning_content}\n[/reasoning]\n\n`));
                 }
+
+                if (data.choices?.[0]?.finish_reason) {
+                  // Stream finished
+                }
+              } catch {
+                // Skip malformed lines
               }
             }
           }

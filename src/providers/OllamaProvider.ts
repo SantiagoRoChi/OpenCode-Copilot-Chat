@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { BaseLocalProvider, LocalModelInfo } from './BaseLocalProvider';
 
 export interface OllamaModel {
   name: string;
@@ -16,112 +17,12 @@ export interface OllamaModel {
   };
 }
 
-export interface OllamaModelInfo {
-  id: string;
-  name: string;
-  maxContextLength: number;
-  supportsReasoning: boolean;
-  supportsVision: boolean;
-  supportsTools: boolean;
-  family?: string;
-  parameterSize?: string;
-  quantizationLevel?: string;
-}
-
-interface ServerEntry {
-  serverId: string;
-  serverName: string;
-  baseUrl: string;
-  connected: boolean;
-}
-
-export class OllamaProvider implements vscode.LanguageModelChatProvider {
-  private models: vscode.LanguageModelChatInformation[] = [];
-  private modelInfoMap = new Map<string, OllamaModelInfo>();
-  private modelServerMap = new Map<string, ServerEntry>();
-  private lastFetch = 0;
-  private readonly outputChannel: vscode.OutputChannel;
-  private readonly _onDidChangeLanguageModelChatInformation = new vscode.EventEmitter<void>();
-
-  readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
-
+export class OllamaProvider extends BaseLocalProvider {
   public get vendor(): string { return 'ollama-plus'; }
   get displayName(): string { return 'Ollama'; }
 
   constructor() {
-    this.outputChannel = vscode.window.createOutputChannel('Ollama');
-    this.outputChannel.appendLine('[OllamaProvider] Created');
-  }
-
-  dispose(): void {
-    this.outputChannel.dispose();
-    this._onDidChangeLanguageModelChatInformation.dispose();
-  }
-
-  addServer(serverId: string, serverName: string, baseUrl: string): void {
-    this.modelServerMap.set(serverId, {
-      serverId,
-      serverName,
-      baseUrl: baseUrl.replace(/\/$/, ''),
-      connected: true,
-    });
-    this.outputChannel.appendLine(`[OllamaProvider] Added "${serverName}" (${baseUrl})`);
-    this.lastFetch = 0;
-    void this.fetchModels().then(() => this._onDidChangeLanguageModelChatInformation.fire());
-  }
-
-  removeServer(serverId: string): void {
-    this.modelServerMap.delete(serverId);
-    this.lastFetch = 0;
-    void this.fetchModels().then(() => this._onDidChangeLanguageModelChatInformation.fire());
-  }
-
-  getServerStatus(): Array<{ id: string; name: string; url: string; available: boolean; models: string[] }> {
-    const result: Array<{ id: string; name: string; url: string; available: boolean; models: string[] }> = [];
-    for (const [serverId, entry] of this.modelServerMap) {
-      const serverModels = this.models
-        .filter(m => m.id.startsWith(`${serverId}:`) && !m.id.includes(':offline'))
-        .map(m => m.id.split(':')[1] || m.id);
-      result.push({
-        id: serverId,
-        name: entry.serverName,
-        url: entry.baseUrl,
-        available: entry.connected && serverModels.length > 0,
-        models: serverModels,
-      });
-    }
-    return result;
-  }
-
-  async provideLanguageModelChatInformation(
-    _options: { silent: boolean; configuration?: { [key: string]: unknown } },
-    _token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelChatInformation[]> {
-    if (Date.now() - this.lastFetch > 5 * 60 * 1000 || this.models.length === 0) {
-      await this.fetchModels();
-    }
-    // If no models found but servers are configured, show placeholder
-    if (this.models.length === 0 && this.modelServerMap.size > 0) {
-      return this.getPlaceholderModels();
-    }
-    return this.models;
-  }
-
-  private getPlaceholderModels(): vscode.LanguageModelChatInformation[] {
-    const placeholders: vscode.LanguageModelChatInformation[] = [];
-    for (const [serverId, entry] of this.modelServerMap) {
-      placeholders.push({
-        id: `${serverId}:offline`,
-        name: `⚠️ ${entry.serverName} (offline)`,
-        vendor: 'ollama-plus',
-        family: 'ollama',
-        version: '1',
-        maxInputTokens: 0,
-        maxOutputTokens: 0,
-        capabilities: {},
-      });
-    }
-    return placeholders;
+    super('Ollama');
   }
 
   async fetchModels(): Promise<void> {
@@ -176,11 +77,11 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
     this.lastFetch = Date.now();
   }
 
-  private extractModelInfo(model: OllamaModel): OllamaModelInfo {
+  private extractModelInfo(model: OllamaModel): LocalModelInfo {
     const name = model.model || model.name;
     const details = model.details || {};
 
-    const info: OllamaModelInfo = {
+    const info: LocalModelInfo = {
       id: name,
       name: name.split(':')[0],
       maxContextLength: 32768,
@@ -227,6 +128,9 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
     return info;
   }
 
+  /**
+   * Override to use Ollama's native /api/generate endpoint with NDJSON streaming.
+   */
   async provideLanguageModelChatResponse(
     model: vscode.LanguageModelChatInformation,
     messages: readonly vscode.LanguageModelChatMessage[],
@@ -239,20 +143,11 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
     if (!entry) throw new Error(`Server ${serverId} not found`);
 
     try {
-      // Convert messages to Ollama format
-      const ollamaMessages = messages.map(msg => {
-        const role = msg.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant' : 'user';
-        const content = msg.content
-          .filter(part => part instanceof vscode.LanguageModelTextPart)
-          .map(part => (part as vscode.LanguageModelTextPart).value)
-          .join('');
-        return { role, content };
-      });
+      const ollamaMessages = this.convertMessages(messages);
 
       const abortController = new AbortController();
       token.onCancellationRequested(() => abortController.abort());
 
-      // Build Ollama options with modelOptions from Copilot Chat
       const ollamaOptions: any = {
         temperature: 0.7,
         num_predict: 4096,
@@ -261,7 +156,6 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
       if (options.modelOptions) {
         for (const [key, value] of Object.entries(options.modelOptions)) {
           if (value !== undefined && value !== null) {
-            // Map common option names
             if (key === 'max_tokens') {
               ollamaOptions.num_predict = value;
             } else if (key === 'top_p') {
@@ -279,7 +173,6 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
         }
       }
 
-      // Use Ollama generate API with streaming
       const response = await fetch(`${entry.baseUrl}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -301,41 +194,8 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
         throw new Error('No response body for streaming');
       }
 
-      // Process NDJSON stream
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-
-            try {
-              const data = JSON.parse(line);
-
-              if (data.response) {
-                progress.report(new vscode.LanguageModelTextPart(data.response));
-              }
-
-              if (data.done) {
-                // Generation complete
-              }
-            } catch {
-              // Skip malformed lines
-            }
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
+      // Ollama uses NDJSON, not SSE
+      await this.streamOllamaResponse(response.body, progress);
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -344,18 +204,46 @@ export class OllamaProvider implements vscode.LanguageModelChatProvider {
     }
   }
 
-  async provideTokenCount(
-    _model: vscode.LanguageModelChatInformation,
-    text: string | vscode.LanguageModelChatMessage,
-    _token: vscode.CancellationToken
-  ): Promise<number> {
-    if (typeof text === 'string') return Math.ceil(text.length / 4);
-    let tokens = 0;
-    for (const part of text.content) {
-      if (part instanceof vscode.LanguageModelTextPart) {
-        tokens += Math.ceil(part.value.length / 4);
+  /**
+   * Stream NDJSON response from Ollama.
+   */
+  protected async streamOllamaResponse(
+    body: ReadableStream<Uint8Array>,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>
+  ): Promise<void> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          try {
+            const data = JSON.parse(line);
+
+            if (data.response) {
+              progress.report(new vscode.LanguageModelTextPart(data.response));
+            }
+
+            if (data.done) {
+              // Generation complete
+            }
+          } catch {
+            // Skip malformed lines
+          }
+        }
       }
+    } finally {
+      reader.releaseLock();
     }
-    return tokens;
   }
 }

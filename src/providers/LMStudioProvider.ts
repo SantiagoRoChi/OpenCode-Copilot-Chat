@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
+import { BaseLocalProvider, LocalModelInfo } from './BaseLocalProvider';
 
-// LM Studio native API v1 model response
 export interface LMStudioApiModel {
   type: 'llm' | 'embedding';
   publisher: string;
@@ -36,114 +36,12 @@ export interface LMStudioApiModel {
   selected_variant?: string;
 }
 
-export interface LMStudioModelInfo {
-  id: string;
-  name: string;
-  maxContextLength: number;
-  supportsReasoning: boolean;
-  supportsVision: boolean;
-  supportsTools: boolean;
-  reasoningOptions?: Array<'off' | 'on' | 'low' | 'medium' | 'high'>;
-  reasoningDefault?: 'off' | 'on' | 'low' | 'medium' | 'high';
-  quantization?: string;
-  parameters?: string;
-  architecture?: string;
-}
-
-interface ServerEntry {
-  serverId: string;
-  serverName: string;
-  baseUrl: string;
-  connected: boolean;
-}
-
-export class LMStudioProvider implements vscode.LanguageModelChatProvider {
-  private models: vscode.LanguageModelChatInformation[] = [];
-  private modelInfoMap = new Map<string, LMStudioModelInfo>();
-  private modelServerMap = new Map<string, ServerEntry>();
-  private lastFetch = 0;
-  private readonly outputChannel: vscode.OutputChannel;
-  private readonly _onDidChangeLanguageModelChatInformation = new vscode.EventEmitter<void>();
-
-  readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
-
+export class LMStudioProvider extends BaseLocalProvider {
   public get vendor(): string { return 'lmstudio'; }
   get displayName(): string { return 'LM Studio'; }
 
   constructor() {
-    this.outputChannel = vscode.window.createOutputChannel('LM Studio');
-    this.outputChannel.appendLine('[LMStudioProvider] Created');
-  }
-
-  dispose(): void {
-    this.outputChannel.dispose();
-    this._onDidChangeLanguageModelChatInformation.dispose();
-  }
-
-  addServer(serverId: string, serverName: string, baseUrl: string): void {
-    this.modelServerMap.set(serverId, {
-      serverId,
-      serverName,
-      baseUrl: baseUrl.replace(/\/$/, ''),
-      connected: true,
-    });
-    this.outputChannel.appendLine(`[LMStudioProvider] Added "${serverName}" (${baseUrl})`);
-    this.lastFetch = 0;
-    void this.fetchModels().then(() => this._onDidChangeLanguageModelChatInformation.fire());
-  }
-
-  removeServer(serverId: string): void {
-    this.modelServerMap.delete(serverId);
-    this.lastFetch = 0;
-    void this.fetchModels().then(() => this._onDidChangeLanguageModelChatInformation.fire());
-  }
-
-  getServerStatus(): Array<{ id: string; name: string; url: string; available: boolean; models: string[] }> {
-    const result: Array<{ id: string; name: string; url: string; available: boolean; models: string[] }> = [];
-    for (const [serverId, entry] of this.modelServerMap) {
-      const serverModels = this.models
-        .filter(m => m.id.startsWith(`${serverId}:`) && !m.id.includes(':offline'))
-        .map(m => m.id.split(':')[1] || m.id);
-      result.push({
-        id: serverId,
-        name: entry.serverName,
-        url: entry.baseUrl,
-        available: entry.connected && serverModels.length > 0,
-        models: serverModels,
-      });
-    }
-    return result;
-  }
-
-  async provideLanguageModelChatInformation(
-    _options: { silent: boolean; configuration?: { [key: string]: unknown } },
-    _token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelChatInformation[]> {
-    if (Date.now() - this.lastFetch > 5 * 60 * 1000 || this.models.length === 0) {
-      await this.fetchModels();
-    }
-    // If no models found but servers are configured, show placeholder
-    if (this.models.length === 0 && this.modelServerMap.size > 0) {
-      return this.getPlaceholderModels();
-    }
-    return this.models;
-  }
-
-  private getPlaceholderModels(): vscode.LanguageModelChatInformation[] {
-    const placeholders: vscode.LanguageModelChatInformation[] = [];
-    for (const [serverId, entry] of this.modelServerMap) {
-      placeholders.push({
-        id: `${serverId}:offline`,
-        name: `⚠️ ${entry.serverName} (offline)`,
-        vendor: 'lmstudio',
-        family: 'lmstudio',
-        version: '1',
-        maxInputTokens: 0,
-        maxOutputTokens: 0,
-        capabilities: {},
-      });
-    }
-    return placeholders;
+    super('LM Studio');
   }
 
   async fetchModels(): Promise<void> {
@@ -151,7 +49,6 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
 
     for (const [serverId, entry] of this.modelServerMap) {
       try {
-        // Use LM Studio native API v1 for rich model info
         const response = await fetch(`${entry.baseUrl}/api/v1/models`, {
           signal: AbortSignal.timeout(5000),
         });
@@ -203,8 +100,8 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
     this.lastFetch = Date.now();
   }
 
-  private extractModelInfo(model: LMStudioApiModel): LMStudioModelInfo {
-    const info: LMStudioModelInfo = {
+  private extractModelInfo(model: LMStudioApiModel): LocalModelInfo {
+    const info: LocalModelInfo = {
       id: model.key,
       name: model.display_name || model.key.split('/').pop() || model.key,
       maxContextLength: model.max_context_length || 32768,
@@ -216,7 +113,6 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
       quantization: model.quantization?.name || undefined,
     };
 
-    // Extract capabilities from LM Studio API
     if (model.capabilities) {
       info.supportsVision = !!model.capabilities.vision;
       info.supportsTools = !!model.capabilities.trained_for_tool_use;
@@ -229,189 +125,5 @@ export class LMStudioProvider implements vscode.LanguageModelChatProvider {
     }
 
     return info;
-  }
-
-  async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
-  ): Promise<void> {
-    const [serverId, modelId] = model.id.split(':');
-    const entry = this.modelServerMap.get(serverId);
-    if (!entry) throw new Error(`Server ${serverId} not found`);
-
-    const modelInfo = this.modelInfoMap.get(model.id);
-
-    try {
-      // Convert messages to OpenAI format (LM Studio compatible)
-      const openaiMessages: any[] = [];
-
-      for (const msg of messages) {
-        const role = msg.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant' : 'user';
-        const textParts = msg.content
-          .filter(part => part instanceof vscode.LanguageModelTextPart)
-          .map(part => (part as vscode.LanguageModelTextPart).value)
-          .join('');
-
-        const imageParts = msg.content.filter(part => part instanceof vscode.LanguageModelDataPart);
-
-        if (imageParts.length > 0 && role === 'user') {
-          // Multi-modal message with images
-          const content: any[] = [{ type: 'text', text: textParts }];
-          for (const img of imageParts) {
-            const dataPart = img as vscode.LanguageModelDataPart;
-            if (dataPart.data && dataPart.mimeType) {
-              const base64 = Buffer.from(dataPart.data).toString('base64');
-              content.push({
-                type: 'image_url',
-                image_url: { url: `data:${dataPart.mimeType};base64,${base64}` },
-              });
-            }
-          }
-          openaiMessages.push({ role, content });
-        } else {
-          openaiMessages.push({ role, content: textParts });
-        }
-      }
-
-      const abortController = new AbortController();
-      token.onCancellationRequested(() => abortController.abort());
-
-      // Build OpenAI-compatible request body
-      const requestBody: any = {
-        model: modelId,
-        messages: openaiMessages,
-        stream: true,
-      };
-
-      // Apply modelOptions from VS Code
-      if (options.modelOptions) {
-        for (const [key, value] of Object.entries(options.modelOptions)) {
-          if (value !== undefined && value !== null) {
-            if (key === 'temperature') {
-              requestBody.temperature = value;
-            } else if (key === 'max_tokens') {
-              requestBody.max_tokens = value;
-            } else if (key === 'top_p') {
-              requestBody.top_p = value;
-            } else if (key === 'reasoning') {
-              // Pass reasoning as extra_body for LM Studio
-              if (!requestBody.extra_body) requestBody.extra_body = {};
-              if (typeof value === 'boolean') {
-                requestBody.extra_body.reasoning = { enabled: value };
-              } else if (typeof value === 'string') {
-                requestBody.extra_body.reasoning = { level: value };
-              } else if (typeof value === 'object') {
-                requestBody.extra_body.reasoning = value;
-              }
-            } else {
-              requestBody[key] = value;
-            }
-          }
-        }
-      }
-
-      // Set defaults
-      if (requestBody.temperature === undefined) {
-        requestBody.temperature = 0.7;
-      }
-      if (requestBody.max_tokens === undefined) {
-        requestBody.max_tokens = 4096;
-      }
-
-      // Enable reasoning if model supports it and user hasn't explicitly disabled it
-      if (modelInfo?.supportsReasoning && !requestBody.extra_body?.reasoning) {
-        const defaultLevel = modelInfo.reasoningDefault || 'on';
-        if (!requestBody.extra_body) requestBody.extra_body = {};
-        if (defaultLevel === 'on' || defaultLevel === 'low' || defaultLevel === 'medium' || defaultLevel === 'high') {
-          requestBody.extra_body.reasoning = { level: defaultLevel };
-        } else {
-          requestBody.extra_body.reasoning = { enabled: true };
-        }
-      }
-
-      // Use OpenAI-compatible streaming API (reliable and well-tested)
-      const response = await fetch(`${entry.baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`HTTP ${response.status}: ${body}`);
-      }
-
-      if (!response.body) {
-        throw new Error('No response body for streaming');
-      }
-
-      // Process standard OpenAI SSE stream
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed === 'data: [DONE]') continue;
-
-            if (trimmed.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(trimmed.slice(6));
-                const delta = data.choices?.[0]?.delta;
-
-                if (delta?.content) {
-                  progress.report(new vscode.LanguageModelTextPart(delta.content));
-                }
-
-                if (delta?.reasoning_content) {
-                  progress.report(new vscode.LanguageModelTextPart(`[reasoning]\n${delta.reasoning_content}\n[/reasoning]\n\n`));
-                }
-
-                if (data.choices?.[0]?.finish_reason) {
-                  // Stream finished
-                }
-              } catch {
-                // Skip malformed lines
-              }
-            }
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
-
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      this.outputChannel.appendLine(`[LMStudioProvider] ERROR: ${errorMessage}`);
-      throw err;
-    }
-  }
-
-  async provideTokenCount(
-    _model: vscode.LanguageModelChatInformation,
-    text: string | vscode.LanguageModelChatMessage,
-    _token: vscode.CancellationToken
-  ): Promise<number> {
-    if (typeof text === 'string') return Math.ceil(text.length / 4);
-    let tokens = 0;
-    for (const part of text.content) {
-      if (part instanceof vscode.LanguageModelTextPart) {
-        tokens += Math.ceil(part.value.length / 4);
-      }
-    }
-    return tokens;
   }
 }

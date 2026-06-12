@@ -71,7 +71,7 @@ export class LMStudioProvider extends BaseLocalProvider {
             ? ` · reasoning (${info.reasoningDefault || 'off'})`
             : '';
 
-          allModels.push({
+          const chatInfo: vscode.LanguageModelChatInformation = {
             id: modelId,
             name: `${info.name} (${entry.serverName})`,
             vendor: 'lmstudio',
@@ -85,7 +85,23 @@ export class LMStudioProvider extends BaseLocalProvider {
               imageInput: info.supportsVision,
               toolCalling: info.supportsTools,
             },
-          });
+          };
+
+          // Add reasoning effort configuration for reasoning models
+          if (info.supportsReasoning) {
+            (chatInfo as any).configurationSchema = {
+              properties: {
+                reasoningEffort: {
+                  type: 'string',
+                  enum: info.reasoningOptions || ['off', 'low', 'medium', 'high'],
+                  default: info.reasoningDefault || 'medium',
+                  description: 'Controls reasoning depth. Higher = more thorough but slower.',
+                },
+              },
+            };
+          }
+
+          allModels.push(chatInfo);
         }
 
         entry.connected = true;
@@ -125,5 +141,168 @@ export class LMStudioProvider extends BaseLocalProvider {
     }
 
     return info;
+  }
+
+  async provideLanguageModelChatResponse(
+    model: vscode.LanguageModelChatInformation,
+    messages: readonly vscode.LanguageModelChatMessage[],
+    options: vscode.ProvideLanguageModelChatResponseOptions,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    const [serverId, modelId] = model.id.split(':');
+    const entry = this.modelServerMap.get(serverId);
+    if (!entry) throw new Error(`Server ${serverId} not found`);
+
+    const modelInfo = this.modelInfoMap.get(model.id);
+
+    try {
+      const openaiMessages = this.convertMessages(messages);
+
+      // Build request body
+      const requestBody: any = {
+        model: modelId,
+        messages: openaiMessages,
+        stream: true,
+      };
+
+      // Apply modelOptions
+      if (options.modelOptions) {
+        for (const [key, value] of Object.entries(options.modelOptions)) {
+          if (value !== undefined && value !== null) {
+            if (key === 'temperature') {
+              requestBody.temperature = value;
+            } else if (key === 'max_tokens') {
+              requestBody.max_tokens = value;
+            } else if (key === 'top_p') {
+              requestBody.top_p = value;
+            } else if (key === 'reasoningEffort') {
+              if (!requestBody.extra_body) requestBody.extra_body = {};
+              requestBody.extra_body.reasoning = { level: value };
+            } else {
+              requestBody[key] = value;
+            }
+          }
+        }
+      }
+
+      // Defaults
+      if (requestBody.temperature === undefined) requestBody.temperature = 0.7;
+      if (requestBody.max_tokens === undefined) requestBody.max_tokens = 4096;
+
+      // Auto-enable reasoning if model supports it
+      if (modelInfo?.supportsReasoning && !requestBody.extra_body?.reasoning) {
+        const level = modelInfo.reasoningDefault || 'medium';
+        if (!requestBody.extra_body) requestBody.extra_body = {};
+        requestBody.extra_body.reasoning = { level };
+      }
+
+      const abortController = new AbortController();
+      token.onCancellationRequested(() => abortController.abort());
+
+      const response = await fetch(`${entry.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+
+      if (!response.body) {
+        throw new Error('No response body for streaming');
+      }
+
+      // Stream SSE response
+      await this.streamSSE(response.body, progress);
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      this.outputChannel.appendLine(`[LMStudioProvider] ERROR: ${errorMessage}`);
+      throw err;
+    }
+  }
+
+  /**
+   * Stream SSE response from OpenAI-compatible endpoint.
+   * Emits text incrementally, handles reasoning_content and tool_calls.
+   */
+  private async streamSSE(
+    body: ReadableStream<Uint8Array>,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>
+  ): Promise<void> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === 'data: [DONE]') continue;
+
+          if (trimmed.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(trimmed.slice(6));
+              const delta = data.choices?.[0]?.delta;
+
+              // reasoning_content comes as separate field in some models (DeepSeek R1)
+              if (delta?.reasoning_content) {
+                progress.report(new vscode.LanguageModelTextPart(delta.reasoning_content));
+              }
+
+              // Regular content - emit directly, VS Code handles thinking tags
+              if (delta?.content) {
+                progress.report(new vscode.LanguageModelTextPart(delta.content));
+              }
+
+              // Tool calls
+              if (delta?.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  const idx = tc.index || 0;
+                  let buf = toolCallBuffers.get(idx);
+                  if (!buf) {
+                    buf = { id: tc.id || '', name: '', args: '' };
+                    toolCallBuffers.set(idx, buf);
+                  }
+                  if (tc.id) buf.id = tc.id;
+                  if (tc.function?.name) buf.name = tc.function.name;
+                  if (tc.function?.arguments) buf.args += tc.function.arguments;
+                }
+              }
+
+              // Finish - emit accumulated tool calls
+              if (data.choices?.[0]?.finish_reason) {
+                for (const [, buf] of toolCallBuffers) {
+                  if (buf.id && buf.name) {
+                    try {
+                      const args = buf.args ? JSON.parse(buf.args) : {};
+                      progress.report(new vscode.LanguageModelToolCallPart(buf.id, buf.name, args));
+                    } catch {
+                      progress.report(new vscode.LanguageModelToolCallPart(buf.id, buf.name, buf.args || {}));
+                    }
+                  }
+                }
+              }
+            } catch {
+              // Skip malformed lines
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 }

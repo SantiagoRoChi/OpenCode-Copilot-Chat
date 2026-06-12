@@ -19,12 +19,15 @@ export interface LocalModelInfo {
   quantization?: string;
   parameters?: string;
   architecture?: string;
+  family?: string;
+  parameterSize?: string;
+  quantizationLevel?: string;
 }
 
 /**
  * Base class for local AI providers (LM Studio, Ollama).
- * Handles SSE streaming, tool calls, thinking tag cleanup, and common logic.
- * Subclasses only need to implement model discovery and request building.
+ * Handles server management, model discovery, and common helpers.
+ * Subclasses implement their own provideLanguageModelChatResponse() with provider-specific streaming.
  */
 export abstract class BaseLocalProvider implements vscode.LanguageModelChatProvider {
   protected models: vscode.LanguageModelChatInformation[] = [];
@@ -120,67 +123,6 @@ export abstract class BaseLocalProvider implements vscode.LanguageModelChatProvi
   abstract fetchModels(): Promise<void>;
 
   /**
-   * Build the chat request body. Subclasses can override to add provider-specific fields.
-   */
-  protected buildRequestBody(
-    modelId: string,
-    messages: any[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    modelInfo?: LocalModelInfo
-  ): any {
-    const requestBody: any = {
-      model: modelId,
-      messages,
-      stream: true,
-    };
-
-    if (options.modelOptions) {
-      for (const [key, value] of Object.entries(options.modelOptions)) {
-        if (value !== undefined && value !== null) {
-          if (key === 'temperature') {
-            requestBody.temperature = value;
-          } else if (key === 'max_tokens') {
-            requestBody.max_tokens = value;
-          } else if (key === 'top_p') {
-            requestBody.top_p = value;
-          } else if (key === 'reasoning') {
-            if (!requestBody.extra_body) requestBody.extra_body = {};
-            if (typeof value === 'boolean') {
-              requestBody.extra_body.reasoning = { enabled: value };
-            } else if (typeof value === 'string') {
-              requestBody.extra_body.reasoning = { level: value };
-            } else if (typeof value === 'object') {
-              requestBody.extra_body.reasoning = value;
-            }
-          } else {
-            requestBody[key] = value;
-          }
-        }
-      }
-    }
-
-    if (requestBody.temperature === undefined) {
-      requestBody.temperature = 0.7;
-    }
-    if (requestBody.max_tokens === undefined) {
-      requestBody.max_tokens = 4096;
-    }
-
-    // Enable reasoning if model supports it
-    if (modelInfo?.supportsReasoning && !requestBody.extra_body?.reasoning) {
-      const defaultLevel = modelInfo.reasoningDefault || 'on';
-      if (!requestBody.extra_body) requestBody.extra_body = {};
-      if (defaultLevel === 'on' || defaultLevel === 'low' || defaultLevel === 'medium' || defaultLevel === 'high') {
-        requestBody.extra_body.reasoning = { level: defaultLevel };
-      } else {
-        requestBody.extra_body.reasoning = { enabled: true };
-      }
-    }
-
-    return requestBody;
-  }
-
-  /**
    * Convert VS Code messages to OpenAI format.
    */
   protected convertMessages(messages: readonly vscode.LanguageModelChatMessage[]): any[] {
@@ -194,146 +136,6 @@ export abstract class BaseLocalProvider implements vscode.LanguageModelChatProvi
       openaiMessages.push({ role, content: textParts });
     }
     return openaiMessages;
-  }
-
-  /**
-   * Clean thinking tags from model output.
-   */
-  protected cleanThinkingTags(text: string): string {
-    if (!text) return text;
-    let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
-    cleaned = cleaned.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
-    cleaned = cleaned.replace(/\[reasoning\][\s\S]*?\[\/reasoning\]/gi, '');
-    cleaned = cleaned.replace(/<think>[\s\S]*$/gi, '');
-    cleaned = cleaned.replace(/<thinking>[\s\S]*$/gi, '');
-    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-    return cleaned.trim();
-  }
-
-  async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
-  ): Promise<void> {
-    const [serverId, modelId] = model.id.split(':');
-    const entry = this.modelServerMap.get(serverId);
-    if (!entry) throw new Error(`Server ${serverId} not found`);
-
-    const modelInfo = this.modelInfoMap.get(model.id);
-
-    try {
-      const openaiMessages = this.convertMessages(messages);
-      const requestBody = this.buildRequestBody(modelId, openaiMessages, options, modelInfo);
-
-      const abortController = new AbortController();
-      token.onCancellationRequested(() => abortController.abort());
-
-      const response = await fetch(`${entry.baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`HTTP ${response.status}: ${body}`);
-      }
-
-      if (!response.body) {
-        throw new Error('No response body for streaming');
-      }
-
-      await this.streamResponse(response.body, progress);
-
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      this.outputChannel.appendLine(`[${this.constructor.name}] ERROR: ${errorMessage}`);
-      throw err;
-    }
-  }
-
-  /**
-   * Stream SSE response. Centralized logic for all local providers.
-   */
-  protected async streamResponse(
-    body: ReadableStream<Uint8Array>,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>
-  ): Promise<void> {
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let contentBuffer = '';
-    const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed === 'data: [DONE]') continue;
-
-          if (trimmed.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(trimmed.slice(6));
-              const delta = data.choices?.[0]?.delta;
-
-              if (delta?.content) {
-                contentBuffer += delta.content;
-                const cleaned = this.cleanThinkingTags(contentBuffer);
-                if (cleaned.length > 0) {
-                  progress.report(new vscode.LanguageModelTextPart(cleaned));
-                  contentBuffer = '';
-                }
-              }
-
-              if (delta?.tool_calls) {
-                for (const tc of delta.tool_calls) {
-                  const idx = tc.index || 0;
-                  let buf = toolCallBuffers.get(idx);
-                  if (!buf) {
-                    buf = { id: tc.id || '', name: '', args: '' };
-                    toolCallBuffers.set(idx, buf);
-                  }
-                  if (tc.id) buf.id = tc.id;
-                  if (tc.function?.name) buf.name = tc.function.name;
-                  if (tc.function?.arguments) buf.args += tc.function.arguments;
-                }
-              }
-
-              if (data.choices?.[0]?.finish_reason) {
-                const cleaned = this.cleanThinkingTags(contentBuffer);
-                if (cleaned.length > 0) {
-                  progress.report(new vscode.LanguageModelTextPart(cleaned));
-                }
-                for (const [idx, buf] of toolCallBuffers) {
-                  if (buf.id && buf.name) {
-                    try {
-                      const args = buf.args ? JSON.parse(buf.args) : {};
-                      progress.report(new vscode.LanguageModelToolCallPart(buf.id, buf.name, args));
-                    } catch {
-                      progress.report(new vscode.LanguageModelToolCallPart(buf.id, buf.name, buf.args || {}));
-                    }
-                  }
-                }
-              }
-            } catch {
-              // Skip malformed lines
-            }
-          }
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
   }
 
   async provideTokenCount(

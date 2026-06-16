@@ -1,386 +1,95 @@
 import * as vscode from 'vscode';
+import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { ServerApiClient } from '../client/multiServerManager';
-import { UsageTracker } from '../usage/UsageTracker';
-import { TokenUsage, SessionStats, LastRequest, ChatMessage } from '../client/types';
 import { getModelCapabilities } from '../client/modelRegistry';
-import {
-  TOKEN_CONSTANTS,
-  estimateTextTokens,
-  calculateMaxInputTokens,
-  truncateMessagesToFit,
-} from '../utils/tokenEstimate';
-
-export type ServerRequestStateEvent =
-  | { kind: 'start'; modelId: string; modelName: string }
-  | { kind: 'complete'; modelId: string; modelName: string; usage?: TokenUsage }
-  | { kind: 'error'; modelId: string; modelName: string; errorMessage: string };
-
-export interface ServerModelInfo {
-  id: string;
-  name: string;
-  family: string;
-  providerID: string;
-  maxInputTokens: number;
-  maxOutputTokens: number;
-  contextLabel: string;
-  capabilityLabels: string[];
-}
 
 interface ServerEntry {
-  serverId: string;
-  serverName: string;
+  name: string;
   baseUrl: string;
   client: ServerApiClient;
   connected: boolean;
 }
 
-export class OpenCodeServerProvider implements vscode.LanguageModelChatProvider {
-  private models: vscode.LanguageModelChatInformation[] = [];
-  private modelInfoMap = new Map<string, ServerModelInfo>();
-  private modelServerMap = new Map<string, ServerEntry>();
-  private lastFetch = 0;
-  private readonly usageTracker: UsageTracker;
-  private readonly outputChannel: vscode.OutputChannel;
-  private sessionStats: SessionStats = { requestCount: 0, totalTokens: { prompt: 0, completion: 0, total: 0 } };
-  private lastRequest?: LastRequest;
-  private readonly _onDidChangeLanguageModelChatInformation = new vscode.EventEmitter<void>();
-  private readonly _onDidChangeRequestState = new vscode.EventEmitter<ServerRequestStateEvent>();
+export class OpenCodeServerProvider extends OpenAICompatibleProvider {
+  private readonly servers = new Map<string, ServerEntry>();
+  private readonly out = vscode.window.createOutputChannel('OpenCode Servers');
 
-  readonly onDidChangeLanguageModelChatInformation = this._onDidChangeLanguageModelChatInformation.event;
-  readonly onDidChangeRequestState = this._onDidChangeRequestState.event;
+  get vendor(): string { return 'opencode-server'; }
 
-  public get vendor(): string { return 'opencode-server'; }
-  get displayName(): string { return 'OpenCode Servers'; }
-
-  constructor() {
-    this.usageTracker = new UsageTracker();
-    this.outputChannel = vscode.window.createOutputChannel('OpenCode Servers');
-    this.outputChannel.appendLine('[ServerProvider] Created');
-  }
-
-  addServer(entry: ServerEntry): void {
-    this.modelServerMap.set(entry.serverId, entry);
-    this.outputChannel.appendLine(`[ServerProvider] Added "${entry.serverName}" (${entry.baseUrl})`);
-    this.lastFetch = 0;
-    void this.fetchModels().then(() => this._onDidChangeLanguageModelChatInformation.fire());
+  addServer(serverId: string, name: string, baseUrl: string, client: ServerApiClient): void {
+    this.servers.set(serverId, { name, baseUrl: baseUrl.replace(/\/$/, ''), client, connected: true });
+    this.invalidateCache();
+    void this.getModels().then(m => { this.models = m; this.fire(); }).catch(() => undefined);
   }
 
   removeServer(serverId: string): void {
-    this.modelServerMap.delete(serverId);
-    this.lastFetch = 0;
-    void this.fetchModels().then(() => this._onDidChangeLanguageModelChatInformation.fire());
+    this.servers.delete(serverId);
+    this.invalidateCache();
+    void this.getModels().then(m => { this.models = m; this.fire(); }).catch(() => undefined);
   }
 
-  getUsageTracker(): UsageTracker { return this.usageTracker; }
+  protected getEndpoint(_compositeId: string): never { throw new Error('not used'); }
 
-  getStatusSnapshot() {
-    return { connected: true, modelCount: this.models.length, lastRequest: this.lastRequest, sessionStats: this.sessionStats };
-  }
+  protected async getModels(): Promise<RoutedModelInfo[]> {
+    const all: RoutedModelInfo[] = [];
 
-  async provideLanguageModelChatInformation(
-    _options: { silent: boolean; configuration?: { [key: string]: unknown } },
-    _token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelChatInformation[]> {
-    if (Date.now() - this.lastFetch > 5 * 60 * 1000 || this.models.length === 0) {
-      await this.fetchModels();
-    }
-    return this.models;
-  }
-
-  async fetchModels(): Promise<void> {
-    const allModels: vscode.LanguageModelChatInformation[] = [];
-
-    for (const [serverId, entry] of this.modelServerMap) {
+    for (const [serverId, entry] of this.servers) {
       try {
         const providers = await entry.client.getProviders();
         if (!providers) { entry.connected = false; continue; }
 
-        const connectedIds = providers.connected || [];
+        entry.connected = true;
+        const connected: string[] = providers.connected ?? [];
         let count = 0;
 
-        for (const provider of providers.all || []) {
-          if (!(provider.connected || connectedIds.includes(provider.id))) continue;
+        for (const provider of providers.all ?? []) {
+          if (!(provider.connected || connected.includes(provider.id))) continue;
 
-          for (const [modelId, modelData] of Object.entries(provider.models || {}) as [string, any][]) {
+          for (const [modelId, modelData] of Object.entries(provider.models ?? {}) as [string, any][]) {
             const uniqueId = `${serverId}:${modelId}`;
+            // modelData can be a boolean (just connectivity) or a rich object
+            const isRich = typeof modelData === 'object' && modelData !== null;
+            // Fall back to registry for capabilities
             const caps = getModelCapabilities(modelId);
-            const maxInput = modelData.maxTokens || caps.maxInputTokens;
-            const maxOutput = modelData.maxOutputTokens || caps.maxOutputTokens;
+            const maxInput: number  = (isRich && modelData.maxTokens)      ?? caps.maxInputTokens;
+            const maxOutput: number = (isRich && modelData.maxOutputTokens) ?? caps.maxOutputTokens;
+            const name: string      = (isRich && modelData.name)            ?? caps.name;
 
-            const info: ServerModelInfo = {
-              id: modelId,
-              name: caps.name !== modelId ? caps.name : (modelData.name || modelId),
-              family: provider.name,
-              providerID: provider.id,
-              maxInputTokens: maxInput,
-              maxOutputTokens: maxOutput,
-              contextLabel: `${Math.round(maxInput / 1000)}K`,
-              capabilityLabels: [
-                ...(caps.toolCalling ? ['Tools'] : []),
-                ...(caps.imageInput ? ['Vision'] : []),
-                ...(caps.reasoning ? ['Reasoning'] : []),
-              ],
-            };
-            this.modelInfoMap.set(uniqueId, info);
+            const headers = entry.client.buildHeaders();
+            const { 'Content-Type': _ct, ...authHeaders } = headers;
 
-            let costStr = '';
-            if (caps.pricePerMillionInput != null || caps.pricePerMillionOutput != null) {
-              const parts: string[] = [];
-              if (caps.pricePerMillionInput != null) parts.push(`In: $${caps.pricePerMillionInput}/M`);
-              if (caps.pricePerMillionOutput != null) parts.push(`Out: $${caps.pricePerMillionOutput}/M`);
-              if (caps.pricePerMillionCacheRead != null) parts.push(`Cache: $${caps.pricePerMillionCacheRead}/M`);
-              costStr = parts.join(' · ');
-            }
-
-            allModels.push({
+            all.push({
               id: uniqueId,
-              name: `${info.name} (${entry.serverName})`,
-              detail: costStr || `${provider.name} · ${info.contextLabel} in`,
+              name: `${name} (${entry.name})`,
               family: provider.name,
-              version: modelData.version || '1',
+              version: (isRich && modelData.version) ?? '1',
               maxInputTokens: maxInput,
               maxOutputTokens: maxOutput,
-              tooltip: `${info.name}\n\nServer: ${entry.serverName}\nProvider: ${provider.name}\nContext: ${info.contextLabel}\nMax Output: ${Math.round(maxOutput / 1000)}K${costStr ? '\n\nPricing:\n' + costStr.replace(/ · /g, '\n') : ''}`,
-              capabilities: { imageInput: caps.imageInput, toolCalling: caps.toolCalling },
+              capabilities: {
+                toolCalling: (isRich && modelData.toolCalling) ?? caps.toolCalling,
+                imageInput:  (isRich && modelData.vision)      ?? caps.imageInput,
+              },
+              _url: `${entry.baseUrl}/v1/chat/completions`,
+              _headers: authHeaders,
+              _apiId: modelId,
+              _apiFormat: 'openai-compatible',
             });
             count++;
           }
         }
-        entry.connected = true;
-        this.outputChannel.appendLine(`[ServerProvider] "${entry.serverName}": ${count} models`);
+
+        this.out.appendLine(`[Servers] "${entry.name}": ${count} models`);
       } catch (err) {
         entry.connected = false;
-        this.outputChannel.appendLine(`[ServerProvider] "${entry.serverName}" ERROR: ${err}`);
+        this.out.appendLine(`[Servers] "${entry.name}" error: ${err}`);
       }
     }
 
-    this.models = allModels;
-    this.lastFetch = Date.now();
+    return all;
   }
 
-  refreshModels(): void {
-    this.lastFetch = 0;
-    this._onDidChangeLanguageModelChatInformation.fire();
-  }
-
-  async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatMessage[],
-    _options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
-  ): Promise<void> {
-    const [serverId, modelId] = model.id.split(':');
-    const entry = this.modelServerMap.get(serverId);
-    if (!entry) throw new Error(`Server ${serverId} not found`);
-
-    const info = this.modelInfoMap.get(model.id);
-    const modelName = info?.name ?? modelId;
-
-    try {
-      // Build messages
-      const openaiMessages = this.convertAllMessages(messages);
-      const modelMaxContext = model.maxInputTokens || TOKEN_CONSTANTS.DEFAULT_CONTEXT_TOKENS;
-      const truncatedMessages = truncateMessagesToFit(
-        openaiMessages as unknown as Record<string, unknown>[],
-        calculateMaxInputTokens({ modelMaxContext, configuredMaxOutput: model.maxOutputTokens || 32000, toolsSerializedLength: 0 }),
-        (msg) => this.outputChannel.appendLine(msg)
-      ) as unknown as ChatMessage[];
-
-      const textParts = truncatedMessages
-        .filter(m => m.role === 'user' || m.role === 'assistant')
-        .map(m => ({
-          type: 'text' as const,
-          text: typeof m.content === 'string' ? m.content : m.content.map((c: any) => c.text || '').join(''),
-        }))
-        .filter((p: any) => p.text);
-
-      // ── OpenCode Server API: JSON con parts[] ──
-      // El servidor devuelve JSON plano (no SSE). Procesamos parts[]
-      // inmediatamente sin delays ni simulación.
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      Object.assign(headers, entry.client.buildHeaders());
-
-      const abortController = new AbortController();
-      token.onCancellationRequested(() => abortController.abort());
-
-      // 1. Crear sesión
-      const sessionRes = await fetch(`${entry.baseUrl}/session`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ title: `VS Code: ${modelName}` }),
-        signal: abortController.signal,
-      });
-      if (!sessionRes.ok) throw new Error(`Session create failed: HTTP ${sessionRes.status}`);
-      const sessionData = await sessionRes.json() as any;
-      const sessionId = sessionData.id;
-      this.outputChannel.appendLine(`[${entry.serverName}] Session: ${sessionId}`);
-
-      // 2. Enviar mensaje y obtener respuesta JSON
-      const messageUrl = `${entry.baseUrl}/session/${sessionId}/message`;
-      this.outputChannel.appendLine(`[${entry.serverName}] POST ${messageUrl}`);
-
-      const messageRes = await fetch(messageUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: { providerID: info?.providerID || 'opencode', modelID: modelId },
-          parts: textParts,
-        }),
-        signal: abortController.signal,
-      });
-
-      if (!messageRes.ok) {
-        const body = await messageRes.text().catch(() => '');
-        throw new Error(`HTTP ${messageRes.status}: ${body}`);
-      }
-
-      // 3. Parsear JSON y procesar parts[]
-      const messageData = await messageRes.json() as any;
-      this.outputChannel.appendLine(`[${entry.serverName}] Response received`);
-
-      // Verificar error a nivel top-level
-      if (messageData.error) {
-        throw new Error(messageData.error.message || JSON.stringify(messageData.error));
-      }
-
-      const parts = messageData.parts || [];
-      let totalText = '';
-      let reasoningText = '';
-      let toolCalls: vscode.LanguageModelToolCallPart[] = [];
-
-      // Acumular todo primero
-      for (const part of parts) {
-        if (token.isCancellationRequested) break;
-
-        switch (part.type) {
-          case 'text':
-            if (part.text) totalText += part.text;
-            break;
-          case 'reasoning':
-            if (part.text) reasoningText += part.text;
-            break;
-          case 'tool':
-            if (part.state?.status === 'pending') {
-              toolCalls.push(new vscode.LanguageModelToolCallPart(
-                part.callID || `call_${Date.now()}`,
-                part.tool || 'unknown',
-                part.state.input || {}
-              ));
-            }
-            break;
-          case 'step-finish':
-            if (part.tokens) {
-              this.recordUsage(part.tokens, entry, modelId, modelName);
-            }
-            break;
-          case 'error':
-            throw new Error(part.text || 'Unknown server error');
-        }
-      }
-
-      // Emitir en orden: reasoning → tools → text
-      // Cedemos al event loop entre cada chunk para que VS Code
-      // procese el progress.report() y actualice el chat UI.
-      const yieldLoop = () => new Promise<void>(r => setTimeout(r, 0));
-
-      if (reasoningText) {
-        progress.report(new vscode.LanguageModelTextPart(`[reasoning]\n${reasoningText}\n[/reasoning]\n\n`));
-        await yieldLoop();
-      }
-
-      for (const tc of toolCalls) {
-        progress.report(tc);
-        await yieldLoop();
-      }
-
-      if (totalText) {
-        progress.report(new vscode.LanguageModelTextPart(totalText));
-        await yieldLoop();
-      }
-
-      // Si no hay nada, enviar un part vacío para cerrar el "working"
-      if (!reasoningText && toolCalls.length === 0 && !totalText) {
-        progress.report(new vscode.LanguageModelTextPart(''));
-        await yieldLoop();
-      }
-
-      // CRÍTICO: Esperar a que VS Code procese todos los chunks antes de
-      // que la función termine. Si no, VS Code se queda "working" para siempre.
-      await new Promise(r => setTimeout(r, 150));
-
-      this.outputChannel.appendLine(`[${entry.serverName}] Response complete (${totalText.length} chars, ${reasoningText.length} reasoning, ${toolCalls.length} tools)`);
-
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      this.outputChannel.appendLine(`[${entry.serverName}] ERROR: ${errorMessage}`);
-      throw err;
-    }
-  }
-
-  async provideTokenCount(
-    _model: vscode.LanguageModelChatInformation,
-    text: string | vscode.LanguageModelChatMessage,
-    _token: vscode.CancellationToken
-  ): Promise<number> {
-    if (typeof text === 'string') return estimateTextTokens(text);
-    let tokens = 0;
-    for (const part of text.content) {
-      if (part instanceof vscode.LanguageModelTextPart) tokens += estimateTextTokens(part.value);
-      else if (part instanceof vscode.LanguageModelToolCallPart) tokens += estimateTextTokens(part.name + JSON.stringify(part.input ?? {}));
-      else if (part instanceof vscode.LanguageModelToolResultPart) {
-        const body = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
-        tokens += estimateTextTokens(body);
-      }
-    }
-    return tokens;
-  }
-
-  private convertAllMessages(messages: readonly vscode.LanguageModelChatMessage[]): ChatMessage[] {
-    const result: ChatMessage[] = [];
-    for (const msg of messages) {
-      const role = msg.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant' : 'user';
-      const textParts: string[] = [];
-      for (const part of msg.content) {
-        if (part instanceof vscode.LanguageModelTextPart) textParts.push(part.value);
-        else if (part instanceof vscode.LanguageModelToolResultPart) {
-          const body = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
-          textParts.push(`[Tool result: ${body}]`);
-        } else if (part instanceof vscode.LanguageModelToolCallPart) {
-          textParts.push(`[Tool call: ${part.name}(${JSON.stringify(part.input)})]`);
-        }
-      }
-      if (textParts.length > 0) {
-        result.push({ role: role as 'user' | 'assistant', content: textParts.join('\n') });
-      }
-    }
-    return result;
-  }
-
-  private recordUsage(
-    tokens: any,
-    entry: ServerEntry,
-    modelId: string,
-    modelName: string
-  ): void {
-    const usage: TokenUsage = {
-      prompt: tokens.prompt ?? tokens.input ?? tokens.prompt_tokens ?? 0,
-      completion: tokens.completion ?? tokens.output ?? tokens.completion_tokens ?? 0,
-      total: tokens.total ?? tokens.total_tokens ?? ((tokens.prompt ?? 0) + (tokens.completion ?? 0)),
-    };
-    this.sessionStats.requestCount++;
-    this.sessionStats.totalTokens.prompt += usage.prompt;
-    this.sessionStats.totalTokens.completion += usage.completion;
-    this.sessionStats.totalTokens.total += usage.total;
-    this.lastRequest = { modelId, modelName, completedAt: Date.now(), usage };
-    this.usageTracker.recordRequest(`server-${Date.now()}`, entry.serverId, modelId, modelName, 'server', usage);
-    this.outputChannel.appendLine(`[${entry.serverName}] Tokens: in=${usage.prompt} out=${usage.completion} total=${usage.total}`);
-  }
-
-  showOutput(): void { this.outputChannel.show(); }
-  dispose(): void {
-    this.outputChannel.dispose();
-    this._onDidChangeLanguageModelChatInformation.dispose();
-    this._onDidChangeRequestState.dispose();
+  override dispose(): void {
+    this.out.dispose();
+    super.dispose();
   }
 }

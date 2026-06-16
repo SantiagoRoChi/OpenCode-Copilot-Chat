@@ -2,7 +2,7 @@
   "name": "plus-providers-copilot-chat",
   "displayName": "+ Providers on Copilot Chat",
   "description": "Connect LM Studio, Ollama, and OpenCode servers to GitHub Copilot Chat — local and remote AI models",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -13,6 +13,14 @@
   "engines": {
     "vscode": "^1.120.0"
   },
+  "enabledApiProposals": [
+    "chatProvider",
+    "languageModelThinkingPart",
+    "chatInputNotification",
+    "chatStatusItem",
+    "languageModelPricing",
+    "languageModelSystem"
+  ],
   "categories": [
     "AI",
     "Machine Learning",

@@ -50,16 +50,25 @@ export interface RegistryEntry {
 const DEFAULT_INPUT = 128000;
 const DEFAULT_OUTPUT = 32000;
 
-// Map from model ID prefix → API format (used for fallback)
-const FORMAT_HINTS: Record<string, { chatEndpoint: string; apiFormat: ApiFormat }> = {
-  'gpt-5':       { chatEndpoint: '/responses', apiFormat: 'openai' },
-  'gpt-4o':      { chatEndpoint: '/responses', apiFormat: 'openai' },
-  'claude-':     { chatEndpoint: '/messages',  apiFormat: 'anthropic' },
-  'gemini-':     { chatEndpoint: '/models/{id}', apiFormat: 'google' },
-};
+// Provider-specific format hints (derived from https://opencode.ai/docs/zen/#endpoints and /go/#endpoints)
+const ZEN_FORMAT_HINTS: Array<[string, { chatEndpoint: string; apiFormat: ApiFormat }]> = [
+  ['gpt-',    { chatEndpoint: '/responses', apiFormat: 'openai' }],
+  ['claude-', { chatEndpoint: '/messages',  apiFormat: 'anthropic' }],
+  ['qwen',    { chatEndpoint: '/messages',  apiFormat: 'anthropic' }],
+  // gemini-* uses a non-standard /models/{id} Google format — excluded from provider
+];
 
-function inferApiFormat(modelId: string): { chatEndpoint: string; apiFormat: ApiFormat } {
-  for (const [prefix, fmt] of Object.entries(FORMAT_HINTS)) {
+const GO_FORMAT_HINTS: Array<[string, { chatEndpoint: string; apiFormat: ApiFormat }]> = [
+  ['minimax-', { chatEndpoint: '/messages', apiFormat: 'anthropic' }],
+  ['qwen',     { chatEndpoint: '/messages', apiFormat: 'anthropic' }],
+];
+
+function inferApiFormat(
+  modelId: string,
+  provider: 'zen' | 'go' = 'zen'
+): { chatEndpoint: string; apiFormat: ApiFormat } {
+  const hints = provider === 'go' ? GO_FORMAT_HINTS : ZEN_FORMAT_HINTS;
+  for (const [prefix, fmt] of hints) {
     if (modelId.startsWith(prefix)) return fmt;
   }
   return { chatEndpoint: '/chat/completions', apiFormat: 'openai-compatible' };
@@ -129,14 +138,14 @@ async function fetchModelsDev(): Promise<void> {
     // Index Zen models
     if (opencode?.models) {
       for (const [id, model] of Object.entries(opencode.models)) {
-        liveRegistry.set(`zen:${id}`, modelsDevToRegistry(id, model));
+        liveRegistry.set(`zen:${id}`, modelsDevToRegistry(id, model, 'zen'));
       }
     }
 
     // Index Go models
     if (opencodeGo?.models) {
       for (const [id, model] of Object.entries(opencodeGo.models)) {
-        liveRegistry.set(`go:${id}`, modelsDevToRegistry(id, model));
+        liveRegistry.set(`go:${id}`, modelsDevToRegistry(id, model, 'go'));
       }
     }
 
@@ -146,8 +155,8 @@ async function fetchModelsDev(): Promise<void> {
   }
 }
 
-function modelsDevToRegistry(id: string, model: ModelsDevModel): RegistryEntry {
-  const fmt = inferApiFormat(id);
+function modelsDevToRegistry(id: string, model: ModelsDevModel, provider: 'zen' | 'go'): RegistryEntry {
+  const fmt = inferApiFormat(id, provider);
 
   // Vision = modalities.input includes "image" OR "pdf"
   const hasVision = model.modalities?.input?.some(m => m === 'image' || m === 'pdf') ?? false;
@@ -184,8 +193,9 @@ export function getModelEndpoint(provider: Provider, modelId: string): ModelEndp
   if (entry) {
     return { chatEndpoint: entry.chatEndpoint, apiFormat: entry.apiFormat };
   }
-  // Fallback: infer from model ID
-  return inferApiFormat(modelId);
+  // Fallback: infer from model ID using provider-aware hints
+  const hint: 'zen' | 'go' = provider === 'go' ? 'go' : 'zen';
+  return inferApiFormat(modelId, hint);
 }
 
 export function getModelCapabilities(modelId: string): ModelCapabilities {

@@ -1,5 +1,43 @@
 # Changelog
 
+## [3.4.0] - 2026-06-16
+
+### Added
+- **VS Code Proposed APIs Integration**: Activadas 6 APIs propuestas de VS Code para mejorar la experiencia de chat
+  - `chatProvider` (v5): Provider de chat con firma actualizada
+  - `languageModelThinkingPart` (v1): Thinking blocks colapsables en el UI
+  - `chatInputNotification`: Notificaciones en el área de input del chat
+  - `chatStatusItem`: Items de estado en la vista de chat
+  - `languageModelPricing`: Información de precios por token
+  - `languageModelSystem` (v3): Mensajes de sistema nativos
+- **Thinking Blocks Colapsables**: Emisión de `LanguageModelThinkingPart` para reasoning content
+  - Soporte en streaming SSE OpenAI/LM Studio (`delta.reasoning_content`)
+  - Soporte en streaming SSE Anthropic (`thinking_delta`)
+  - Los bloques de thinking se renderizan como elementos colapsables en VS Code
+- **Chat Input Notifications**: Sistema de notificaciones en el input del chat
+  - `showMissingConfigNotification()`: Aviso cuando un provider no está configurado
+  - `showConnectionErrorNotification()`: Aviso de errores de conexión
+  - `showConnectedNotification()`: Confirmación de conexión exitosa
+  - Fallback a mensajes estándar de VS Code cuando la API propuesta no está disponible
+- **Chat Status Items**: Manager de estado para providers
+  - `ChatStatusItemManager`: Crea items de estado usando la API propuesta
+  - Fallback a `StatusBarItem` cuando la API no está disponible
+- **Model Pricing**: Información de precios integrada en los modelos
+  - Campo `_pricing` en `RoutedModelInfo` con `inputTokenPrice`, `outputTokenPrice`, `currency`
+  - Precios populados desde `models.dev` para providers OpenCode (Free, Go)
+  - Conversión automática de $/M tokens a $/token
+- **System Messages Nativas**: Reemplazo del hack numérico por API propuesta
+  - Eliminado `(msg.role as number) === 2`
+  - Usa `(vscode as any).LanguageModelChatMessageRole.System` en `convertMessages()` y `convertMessagesAnthropic()`
+
+### Changed
+- **Refactor de Providers**: Unificación de providers bajo `OpenAICompatibleProvider`
+  - Eliminados `BaseLocalProvider.ts`, `BaseOpenCodeProvider.ts`
+  - Nuevo `OpenAICompatibleProvider.ts` como clase base para todos los providers
+  - Soporte unificado para formatos: OpenAI, Anthropic, OpenAI Responses
+- **Firma de método actualizada**: `provideLanguageModelChatResponse` usa `LanguageModelChatRequestMessage[]` en lugar de `LanguageModelChatMessage[]`
+- **Eliminados archivos obsoletos**: `openCodeApiClient.ts`, `anthropicAdapter.ts`, `messageConverter.ts`, `openaiResponsesAdapter.ts`, `responseStreamer.ts`, `toolCallAdapter.ts`
+
 ## [3.3.0] - 2026-06-11
 
 ### Added

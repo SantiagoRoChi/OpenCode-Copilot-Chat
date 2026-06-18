@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
+import { SecretStorage } from '../config/secretStorage';
+import { ServerData } from '../webview/openCodeWebviewProvider';
 
 // Response shape from /api/v1/models (LM Studio native API)
 interface LMStudioModel {
@@ -15,6 +17,9 @@ interface LMStudioModel {
     trained_for_tool_use?: boolean;
     reasoning?: { allowed_options?: string[]; default?: string };
   };
+  /** Optional list of devices/instances where this model is loaded. New LM Studio versions
+   *  expose the same `key` once per loaded device (e.g. GPU0, GPU1, CPU, MPS). */
+  loaded_instances?: Array<{ id: string; state?: string }>;
 }
 
 interface ServerEntry {
@@ -26,19 +31,50 @@ interface ServerEntry {
 export class LMStudioProvider extends OpenAICompatibleProvider {
   private readonly servers = new Map<string, ServerEntry>();
   private readonly out = vscode.window.createOutputChannel('LM Studio');
+  private readonly storage?: SecretStorage;
+
+  constructor(storage?: SecretStorage) {
+    super();
+    this.storage = storage;
+  }
 
   get vendor(): string { return 'lmstudio'; }
+
+  /** Load persisted LMStudio servers from workspace state. */
+  async loadPersistedServers(): Promise<void> {
+    if (!this.storage) return;
+    const configs = await this.storage.getLocalServerConfigs();
+    for (const c of configs) {
+      if (c.kind === 'lmstudio' && c.enabled) {
+        this.servers.set(c.id, { name: c.name, baseUrl: c.baseUrl.replace(/\/$/, ''), connected: true });
+      }
+    }
+  }
 
   addServer(serverId: string, name: string, baseUrl: string): void {
     this.servers.set(serverId, { name, baseUrl: baseUrl.replace(/\/$/, ''), connected: true });
     this.invalidateCache();
+    void this.persistLocal();
     void this.getModels().then(m => { this.models = m; this.fire(); }).catch(() => undefined);
   }
 
   removeServer(serverId: string): void {
     this.servers.delete(serverId);
     this.invalidateCache();
+    void this.persistLocal();
     void this.getModels().then(m => { this.models = m; this.fire(); }).catch(() => undefined);
+  }
+
+  /** Persist current in-memory LMStudio servers to workspace state. */
+  private async persistLocal(): Promise<void> {
+    if (!this.storage) return;
+    const existing = await this.storage.getLocalServerConfigs();
+    const others = existing.filter(c => c.kind !== 'lmstudio');
+    const mine: typeof existing = [];
+    for (const [id, entry] of this.servers) {
+      mine.push({ id, kind: 'lmstudio', name: entry.name, baseUrl: entry.baseUrl, enabled: true });
+    }
+    await this.storage.setLocalServerConfigs([...others, ...mine]);
   }
 
   protected async getModels(): Promise<RoutedModelInfo[]> {
@@ -69,36 +105,51 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
           const supportsReasoning = m.capabilities?.reasoning != null;
           const quantStr = m.quantization?.name ?? '';
 
-          const info: RoutedModelInfo = {
-            id: `${serverId}:${m.key}`,
-            name: `${displayName} (${entry.name})`,
-            family: m.architecture ?? displayName,
-            version: '1',
-            maxInputTokens: contextWindow,
-            maxOutputTokens: maxOutput,
-            detail: `${quantStr}${quantStr ? ' \u00b7 ' : ''}${Math.round(contextWindow / 1024)}K ctx${isVision ? ' \u00b7 vision' : ''}`,
-            capabilities: { toolCalling: supportsTools, imageInput: isVision },
-            _url: `${entry.baseUrl}/v1/chat/completions`,
-            _headers: {},
-            _apiId: m.key,
-            _apiFormat: 'openai-compatible',
-          };
+          // Newer LMStudio versions expose the same `key` once per device.
+          // Emit one RoutedModelInfo per loaded instance so the user can
+          // pick GPU vs CPU explicitly. If no instances are listed, fall
+          // back to a single entry with no device suffix.
+          const instances = m.loaded_instances && m.loaded_instances.length > 0
+            ? m.loaded_instances
+            : [{ id: '' }];
+          const showDeviceSuffix = instances.length > 1 || (instances.length === 1 && instances[0].id !== '');
 
-          if (supportsReasoning) {
-            (info as any).configurationSchema = {
-              properties: {
-                reasoningEffort: {
-                  type: 'string',
-                  enum: ['low', 'medium', 'high'],
-                  default: 'medium',
-                  description: 'Reasoning depth for thinking models.',
-                  enumItemLabels: ['Low', 'Medium', 'High'],
-                },
-              },
+          for (const inst of instances) {
+            const info: RoutedModelInfo = {
+              id: inst.id
+                ? `${serverId}:${m.key}@${inst.id}`
+                : `${serverId}:${m.key}`,
+              name: showDeviceSuffix && inst.id
+                ? `${displayName} (${inst.id}) (${entry.name})`
+                : `${displayName} (${entry.name})`,
+              family: m.architecture ?? displayName,
+              version: '1',
+              maxInputTokens: contextWindow,
+              maxOutputTokens: maxOutput,
+              detail: `${quantStr}${quantStr ? ' \u00b7 ' : ''}${Math.round(contextWindow / 1024)}K ctx${isVision ? ' \u00b7 vision' : ''}${inst.id ? ' \u00b7 ' + inst.id : ''}`,
+              capabilities: { toolCalling: supportsTools, imageInput: isVision },
+              _url: `${entry.baseUrl}/v1/chat/completions`,
+              _headers: {},
+              _apiId: m.key,
+              _apiFormat: 'openai-compatible',
             };
-          }
 
-          all.push(info);
+            if (supportsReasoning) {
+              (info as any).configurationSchema = {
+                properties: {
+                  reasoningEffort: {
+                    type: 'string',
+                    enum: ['low', 'medium', 'high'],
+                    default: 'medium',
+                    description: 'Reasoning depth for thinking models.',
+                    enumItemLabels: ['Low', 'Medium', 'High'],
+                  },
+                },
+              };
+            }
+
+            all.push(info);
+          }
         }
 
         this.out.appendLine(`[LMStudio] "${entry.name}": ${all.length} models`);
@@ -114,6 +165,23 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
   override dispose(): void {
     this.out.dispose();
     super.dispose();
+  }
+
+  /** Snapshot of known LMStudio servers for the dashboard treeview. */
+  getServerList(): ServerData[] {
+    const list: ServerData[] = [];
+    for (const [id, entry] of this.servers) {
+      list.push({
+        id,
+        name: entry.name,
+        url: entry.baseUrl,
+        available: entry.connected,
+        models: [],
+        providerCount: 0,
+        type: 'lmstudio',
+      });
+    }
+    return list;
   }
 }
 

@@ -99,29 +99,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // ── LM Studio ────────────────────────────────────────────────────────────
 
-  lmStudioProvider = new LMStudioProvider();
+  lmStudioProvider = new LMStudioProvider(secretStorage);
+  await lmStudioProvider.loadPersistedServers();
 
-  try {
-    const lmUrl = vscode.workspace.getConfiguration('lmstudio').get<string>('baseUrl') || 'http://localhost:1234';
-    const health = await fetch(`${lmUrl}/v1/models`, { signal: AbortSignal.timeout(3000) });
-    if (health.ok) {
-      lmStudioProvider.addServer('local', 'Local LM Studio', lmUrl);
-      console.log(`+ Providers: LM Studio connected at ${lmUrl}`);
-    }
-  } catch { /* not running */ }
+  if (lmStudioProvider.getServerList().length === 0) {
+    try {
+      const lmUrl = vscode.workspace.getConfiguration('lmstudio').get<string>('baseUrl') || 'http://localhost:1234';
+      const health = await fetch(`${lmUrl}/v1/models`, { signal: AbortSignal.timeout(3000) });
+      if (health.ok) {
+        lmStudioProvider.addServer('local', 'Local LM Studio', lmUrl);
+        console.log(`+ Providers: LM Studio connected at ${lmUrl}`);
+      }
+    } catch { /* not running */ }
+  } else {
+    console.log(`+ Providers: LM Studio loaded ${lmStudioProvider.getServerList().length} persisted server(s).`);
+  }
 
   // ── Ollama ────────────────────────────────────────────────────────────────
 
-  ollamaProvider = new OllamaProvider();
+  ollamaProvider = new OllamaProvider(secretStorage);
+  await ollamaProvider.loadPersistedServers();
 
-  try {
-    const ollamaUrl = vscode.workspace.getConfiguration('ollama').get<string>('baseUrl') || 'http://localhost:11434';
-    const health = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
-    if (health.ok) {
-      ollamaProvider.addServer('local', 'Local Ollama', ollamaUrl);
-      console.log(`+ Providers: Ollama connected at ${ollamaUrl}`);
-    }
-  } catch { /* not running */ }
+  if (ollamaProvider.getServerList().length === 0) {
+    try {
+      const ollamaUrl = vscode.workspace.getConfiguration('ollama').get<string>('baseUrl') || 'http://localhost:11434';
+      const health = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
+      if (health.ok) {
+        ollamaProvider.addServer('local', 'Local Ollama', ollamaUrl);
+        console.log(`+ Providers: Ollama connected at ${ollamaUrl}`);
+      }
+    } catch { /* not running */ }
+  } else {
+    console.log(`+ Providers: Ollama loaded ${ollamaProvider.getServerList().length} persisted server(s).`);
+  }
 
   // ── Register providers with VS Code LM API ────────────────────────────────
 
@@ -201,6 +211,18 @@ async function refreshTreeView(): Promise<void> {
     });
   }
 
+  // Include LM Studio and Ollama servers so they show up in the side panel.
+  if (lmStudioProvider) {
+    for (const s of lmStudioProvider.getServerList()) {
+      allServers.push({ ...s, port: undefined, version: undefined });
+    }
+  }
+  if (ollamaProvider) {
+    for (const s of ollamaProvider.getServerList()) {
+      allServers.push({ ...s, port: undefined, version: undefined });
+    }
+  }
+
   const state: DashboardState = {
     servers: allServers,
     zenKey: zenProvider.getApiKey() ? '***' : '',
@@ -278,6 +300,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
       if (url === undefined) return;
       lmStudioProvider.addServer(`lmstudio-${randomUUID().slice(0, 8)}`, name, url);
       vscode.window.showInformationMessage(`LM Studio "${name}" added.`);
+      void refreshTreeView();
       return;
     }
 
@@ -288,6 +311,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
       if (url === undefined) return;
       ollamaProvider.addServer(`ollama-${randomUUID().slice(0, 8)}`, name, url);
       vscode.window.showInformationMessage(`Ollama "${name}" added.`);
+      void refreshTreeView();
       return;
     }
 
@@ -363,24 +387,67 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
   reg('opencode-zen.removeServer', async (_: unknown, serverId?: string) => {
     if (!serverId) {
-      const servers = await secretStorage.getServerConfigs();
-      if (!servers.length) { vscode.window.showInformationMessage('No servers configured.'); return; }
-      const pick = await vscode.window.showQuickPick(servers.map(s => ({ label: s.name, id: s.id })), { placeHolder: 'Select server to remove' });
+      // Aggregate OpenCode + LMStudio + Ollama servers into a single picker.
+      const opencode = await secretStorage.getServerConfigs();
+      const local = await secretStorage.getLocalServerConfigs();
+      const all = [
+        ...opencode.map(s => ({ label: `${s.name} (OpenCode)`, id: s.id, serverKind: 'opencode' as const, name: s.name })),
+        ...local.map(s => ({ label: `${s.name} (${s.kind === 'lmstudio' ? 'LM Studio' : 'Ollama'})`, id: s.id, serverKind: s.kind, name: s.name })),
+      ];
+      if (!all.length) { vscode.window.showInformationMessage('No servers configured.'); return; }
+      const pick = await vscode.window.showQuickPick(all, { placeHolder: 'Select server to remove' });
       if (!pick) return;
       serverId = (pick as any).id;
-    }
-    const configs = await secretStorage.getServerConfigs();
-    const config = configs.find(c => c.id === serverId);
-    if (!config) return;
-    const confirm = await vscode.window.showWarningMessage(`Remove "${config.name}"?`, 'Remove', 'Cancel');
-    if (confirm !== 'Remove') return;
+      const kind = (pick as any).serverKind as 'opencode' | 'lmstudio' | 'ollama';
+      const name = (pick as any).name as string;
+      const confirm = await vscode.window.showWarningMessage(`Remove "${name}"?`, 'Remove', 'Cancel');
+      if (confirm !== 'Remove') return;
 
-    await secretStorage.setServerConfigs(configs.filter(c => c.id !== serverId));
-    await secretStorage.setServerPassword(serverId!, '');
-    serverProvider.removeServer(serverId!);
-    await serverManager.connectAll();
-    vscode.window.showInformationMessage(`Server "${config.name}" removed.`);
-    void refreshTreeView();
+      if (kind === 'opencode') {
+        const configs = await secretStorage.getServerConfigs();
+        await secretStorage.setServerConfigs(configs.filter(c => c.id !== serverId));
+        await secretStorage.setServerPassword(serverId!, '');
+        serverProvider.removeServer(serverId!);
+        await serverManager.connectAll();
+      } else {
+        if (kind === 'lmstudio') lmStudioProvider.removeServer(serverId!);
+        else ollamaProvider.removeServer(serverId!);
+        const configs = await secretStorage.getLocalServerConfigs();
+        await secretStorage.setLocalServerConfigs(configs.filter(c => c.id !== serverId));
+      }
+      vscode.window.showInformationMessage(`Server "${name}" removed.`);
+      void refreshTreeView();
+      return;
+    }
+
+    // Called with a serverId argument (e.g. from a context menu). Try OpenCode
+    // first; fall back to local storage.
+    const opencodeConfigs = await secretStorage.getServerConfigs();
+    const opencodeMatch = opencodeConfigs.find(c => c.id === serverId);
+    if (opencodeMatch) {
+      const confirm = await vscode.window.showWarningMessage(`Remove "${opencodeMatch.name}"?`, 'Remove', 'Cancel');
+      if (confirm !== 'Remove') return;
+      await secretStorage.setServerConfigs(opencodeConfigs.filter(c => c.id !== serverId));
+      await secretStorage.setServerPassword(serverId!, '');
+      serverProvider.removeServer(serverId!);
+      await serverManager.connectAll();
+      vscode.window.showInformationMessage(`Server "${opencodeMatch.name}" removed.`);
+      void refreshTreeView();
+      return;
+    }
+    const localConfigs = await secretStorage.getLocalServerConfigs();
+    const localMatch = localConfigs.find(c => c.id === serverId);
+    if (localMatch) {
+      const confirm = await vscode.window.showWarningMessage(`Remove "${localMatch.name}"?`, 'Remove', 'Cancel');
+      if (confirm !== 'Remove') return;
+      if (localMatch.kind === 'lmstudio') lmStudioProvider.removeServer(serverId!);
+      else ollamaProvider.removeServer(serverId!);
+      await secretStorage.setLocalServerConfigs(localConfigs.filter(c => c.id !== serverId));
+      vscode.window.showInformationMessage(`Server "${localMatch.name}" removed.`);
+      void refreshTreeView();
+      return;
+    }
+    vscode.window.showInformationMessage('Server not found.');
   });
 
   // ── Launch Server ─────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ApiFormat } from '../client/modelRegistry';
+import { ToolCallAdapter } from '../tools/toolCallAdapter';
 
 /**
  * Routing data embedded directly in each model object.
@@ -127,6 +128,13 @@ export abstract class OpenAICompatibleProvider implements vscode.LanguageModelCh
     const decoder = new TextDecoder();
     let buffer = '';
     const toolCalls = new Map<number, { id: string; name: string; args: string }>();
+    // Inline parser for local models (LMStudio/Ollama) that emit tool calls
+    // and reasoning inside `delta.content` as <tool_call>...</tool_call> and <think>...</think>
+    // blocks. The native `delta.tool_calls` / `delta.reasoning_content`
+    // paths above still work for OpenCode/Zen/Go and take precedence when
+    // they fire.
+    const inlineAdapter = new ToolCallAdapter();
+    let inlineBuffer = '';
 
     try {
       while (true) {
@@ -147,9 +155,24 @@ export abstract class OpenAICompatibleProvider implements vscode.LanguageModelCh
             const delta = data.choices?.[0]?.delta;
             if (!delta) continue;
 
-            // Text content (standard path)
+            // Text content — feed through the inline parser to extract any
+            // <tool_call> / <think> blocks emitted by local models.
             if (delta.content) {
-              progress.report(new vscode.LanguageModelTextPart(delta.content));
+              const parsed = inlineAdapter.parse(inlineBuffer + delta.content);
+              inlineBuffer = parsed.leftover;
+              if (parsed.text) {
+                progress.report(new vscode.LanguageModelTextPart(parsed.text));
+              }
+              if (parsed.reasoning) {
+                const thinkingPart = new (vscode as any).LanguageModelThinkingPart(parsed.reasoning);
+                progress.report(thinkingPart as vscode.LanguageModelResponsePart);
+              }
+              for (const tc of parsed.toolCalls) {
+                const input = typeof tc.input === 'string'
+                  ? { raw: tc.input }
+                  : (tc.input as Record<string, unknown>);
+                progress.report(new vscode.LanguageModelToolCallPart(tc.callId, tc.name, input));
+              }
             }
 
             // Thinking / reasoning content (collapsible in VS Code when languageModelThinkingPart is enabled)

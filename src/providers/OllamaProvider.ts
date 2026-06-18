@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
+import { SecretStorage } from '../config/secretStorage';
+import { ServerData } from '../webview/openCodeWebviewProvider';
 
 interface OllamaModelListItem {
   name: string;
@@ -26,19 +28,50 @@ export class OllamaProvider extends OpenAICompatibleProvider {
   private readonly servers = new Map<string, ServerEntry>();
   private readonly showCache = new Map<string, RoutedModelInfo>();
   private readonly out = vscode.window.createOutputChannel('Ollama');
+  private readonly storage?: SecretStorage;
+
+  constructor(storage?: SecretStorage) {
+    super();
+    this.storage = storage;
+  }
 
   get vendor(): string { return 'ollama-plus'; }
+
+  /** Load persisted Ollama servers from workspace state. */
+  async loadPersistedServers(): Promise<void> {
+    if (!this.storage) return;
+    const configs = await this.storage.getLocalServerConfigs();
+    for (const c of configs) {
+      if (c.kind === 'ollama' && c.enabled) {
+        this.servers.set(c.id, { name: c.name, baseUrl: c.baseUrl.replace(/\/$/, ''), connected: true });
+      }
+    }
+  }
 
   addServer(serverId: string, name: string, baseUrl: string): void {
     this.servers.set(serverId, { name, baseUrl: baseUrl.replace(/\/$/, ''), connected: true });
     this.invalidateCache();
+    void this.persistLocal();
     void this.getModels().then(m => { this.models = m; this.fire(); }).catch(() => undefined);
   }
 
   removeServer(serverId: string): void {
     this.servers.delete(serverId);
     this.invalidateCache();
+    void this.persistLocal();
     void this.getModels().then(m => { this.models = m; this.fire(); }).catch(() => undefined);
+  }
+
+  /** Persist current in-memory Ollama servers to workspace state. */
+  private async persistLocal(): Promise<void> {
+    if (!this.storage) return;
+    const existing = await this.storage.getLocalServerConfigs();
+    const others = existing.filter(c => c.kind !== 'ollama');
+    const mine: typeof existing = [];
+    for (const [id, entry] of this.servers) {
+      mine.push({ id, kind: 'ollama', name: entry.name, baseUrl: entry.baseUrl, enabled: true });
+    }
+    await this.storage.setLocalServerConfigs([...others, ...mine]);
   }
 
   protected async getModels(): Promise<RoutedModelInfo[]> {
@@ -119,5 +152,22 @@ export class OllamaProvider extends OpenAICompatibleProvider {
   override dispose(): void {
     this.out.dispose();
     super.dispose();
+  }
+
+  /** Snapshot of known Ollama servers for the dashboard treeview. */
+  getServerList(): ServerData[] {
+    const list: ServerData[] = [];
+    for (const [id, entry] of this.servers) {
+      list.push({
+        id,
+        name: entry.name,
+        url: entry.baseUrl,
+        available: entry.connected,
+        models: [],
+        providerCount: 0,
+        type: 'ollama-plus',
+      });
+    }
+    return list;
   }
 }

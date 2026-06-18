@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.5.0] - 2026-06-17
+
+### Fixed
+- **Tool calling broken on LM Studio and Ollama**: Local models emit tool calls as inline `<tool_call>{...}</tool_call>` blocks inside `delta.content` instead of native `delta.tool_calls`. The SSE parser now runs every text chunk through a new `ToolCallAdapter` (`src/tools/toolCallAdapter.ts`) that detects these XML-style blocks, generates a stable `callId`, and emits a `LanguageModelToolCallPart`. Native `delta.tool_calls` is still honored (OpenCode / Zen / Go unchanged).
+- **Tool-calls and reasoning tags from many model families**: The parser recognizes the full range of XML/pipe-bar/bracket/markdown tag variants used by Qwen, DeepSeek, Hermes, Llama 3.x, Mistral (`<antml:function_calls>`), Phi-3.5, Granite, Cohere, Yi, and any local model that emits reasoning or tool blocks inside `delta.content`. Tool-call tags: `<tool_call>`, `<toolcall>`, `<tool>`, `<invoke name="x">`, `<action>`, `<function>`, `<antml:function_calls>`, `<|tool_call|>` (Llama 3), `[TOOL_CALL]` / `[TOOL_CALLS]` (Cohere/Yi). Reasoning tags: `<think>`, `<thinking>`, `<reasoning>`, `<reflection>`, `<analysis>`, `<thought>`, `<solution>`, `<plan>`, `<|thinking|>` / `<|reasoning|>`, `[THINK]`, and markdown-style `### Reasoning` / `### Thought` / `### Plan` blocks. Body parsing supports the common JSON shapes (`{name, arguments|parameters|input|args}`, `{function: {name, arguments}}`, Cohere `{tool, parameters}`) and the Hermes/Granite XML form `<invoke name="x">JSON-args</invoke>`.
+- **Reasoning blocks missing on LM Studio and Ollama**: `` blocks inside `delta.content` are now parsed and emitted as `LanguageModelThinkingPart`, so reasoning models show their thinking as a collapsible block. Native `delta.reasoning_content` is still honored.
+- **LM Studio / Ollama servers invisible in the side panel**: `OpenCodeTreeProvider` only received OpenCode servers in its state. The two local providers now expose `getServerList()` and `refreshTreeView()` aggregates them under the same `Dashboard` header with a per-type icon (LM Studio = `$(chip)`, Ollama = `$(zap)`).
+- **LM Studio / Ollama servers lost on reload**: Servers added via the "Add Server" command were kept only in memory. They are now persisted to `SecretStorage` (workspace state) under a new `LocalServerConfig` schema and re-hydrated on `activate()`.
+
+### Added
+- **Per-device LM Studio model entries**: Newer LM Studio versions expose the same model `key` once per device (`GPU0`, `GPU1`, `CPU`, `MPS`). The provider now reads `loaded_instances[]` and emits one `RoutedModelInfo` per `(model, device)` pair, with the device id suffixed in the display name and embedded in the composite id (`${serverId}:${key}@${device}`). Single-device installations keep the original naming.
+- **Unified "Remove Server" picker**: `opencode-zen.removeServer` now lists OpenCode, LM Studio and Ollama entries together, dispatching to the right backend (`MultiServerManager` vs `LMStudioProvider` vs `OllamaProvider`) and persisting accordingly.
+- **`ToolCallAdapter` unit tests** in `test/tool-call-adapter.test.ts`: 46 cases covering complete blocks, split chunks, partial opening tags, nested JSON shape, malformed bodies, interleaved reasoning + tool calls, and every supported tag family (Qwen, DeepSeek, Hermes, Llama 3.x, Mistral, Cohere, Yi, markdown headers).
+
+### Files
+- **Added**: `src/tools/toolCallAdapter.ts`, `test/tool-call-adapter.test.ts`
+- **Modified**: `src/providers/OpenAICompatibleProvider.ts`, `src/providers/LMStudioProvider.ts`, `src/providers/OllamaProvider.ts`, `src/config/secretStorage.ts`, `src/extension.ts`
+
 ## [3.4.0] - 2026-06-16
 
 ### Added

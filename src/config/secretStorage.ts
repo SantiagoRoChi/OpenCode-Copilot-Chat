@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 const ZEN_SECRET_KEY = 'opencode-zen.zenKey';
 const GO_SECRET_KEY = 'opencode-zen.goKey';
 const SERVER_CONFIGS_KEY = 'opencode-zen.serverConfigs';
+const LOCAL_SERVER_CONFIGS_KEY = 'opencode-zen.localServerConfigs';
 
 export interface ServerConfig {
   id: string;
@@ -13,6 +14,16 @@ export interface ServerConfig {
   hasPassword?: boolean;
   enabled: boolean;
   isLocal: boolean;
+}
+
+export type LocalServerKind = 'lmstudio' | 'ollama';
+
+export interface LocalServerConfig {
+  id: string;
+  kind: LocalServerKind;
+  name: string;
+  baseUrl: string;
+  enabled: boolean;
 }
 
 export class SecretStorage {
@@ -96,5 +107,22 @@ export class SecretStorage {
     } else {
       await this.secrets.store(key, password.trim());
     }
+  }
+
+  // ── Local server persistence (LMStudio / Ollama) ─────────────────────────
+
+  async getLocalServerConfigs(): Promise<LocalServerConfig[]> {
+    const stored = this.state.get<string>(LOCAL_SERVER_CONFIGS_KEY);
+    if (!stored) return [];
+    try {
+      const parsed = JSON.parse(stored) as LocalServerConfig[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async setLocalServerConfigs(configs: LocalServerConfig[]): Promise<void> {
+    await this.state.update(LOCAL_SERVER_CONFIGS_KEY, JSON.stringify(configs));
   }
 }

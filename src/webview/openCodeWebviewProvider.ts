@@ -37,6 +37,18 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
     };
     webviewView.webview.html = this.getHtml();
     this.sendState();
+
+    // Handle button clicks from the webview
+    webviewView.webview.onDidReceiveMessage((message: any) => {
+      switch (message.command) {
+        case 'configureZen':
+          vscode.commands.executeCommand('opencode-zen.configureZen');
+          break;
+        case 'configureGo':
+          vscode.commands.executeCommand('opencode-zen.configureGo');
+          break;
+      }
+    });
   }
 
   update(state: DashboardState): void {

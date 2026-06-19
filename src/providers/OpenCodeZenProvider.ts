@@ -3,6 +3,8 @@ import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatiblePro
 import { ZEN_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
 import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry';
+import { streamAnthropicChat } from './sdk/anthropicChat';
+import { streamOpenAIChat } from './sdk/openaiChat';
 
 interface ApiModel { id: string; }
 
@@ -21,7 +23,6 @@ export class OpenCodeZenProvider extends OpenAICompatibleProvider {
   async loadApiKey(): Promise<void> {
     this.apiKey = await this.storage.getZenKey();
     if (this.apiKey) {
-      // Invalidate cache so VS Code re-queries models with the loaded key
       this.invalidateCache();
     }
   }
@@ -46,10 +47,43 @@ export class OpenCodeZenProvider extends OpenAICompatibleProvider {
     return super.provideLanguageModelChatInformation(options, token);
   }
 
+  /**
+   * Routes each chat request to the correct AI SDK based on the model's API format.
+   * The API key is passed fresh to the SDK on every call — no stale cache.
+   */
+  override async provideLanguageModelChatResponse(
+    model: vscode.LanguageModelChatInformation,
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+    options: vscode.ProvideLanguageModelChatResponseOptions,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    const rm = model as RoutedModelInfo;
+    const apiKey = this.apiKey;
+    if (!apiKey) {
+      throw new Error('Zen API key not configured. Use "OpenCode Zen: Configure Zen Key".');
+    }
+
+    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+    const modelOpts = options.modelOptions ?? {};
+
+    if (rm._apiFormat === 'anthropic') {
+      await streamAnthropicChat(
+        apiKey, `${ZEN_BASE_URL}`, rm._apiId,
+        rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+      );
+    } else {
+      // openai or openai-compatible
+      await streamOpenAIChat(
+        apiKey, `${ZEN_BASE_URL}`, rm._apiId,
+        rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+      );
+    }
+    this.out.appendLine(`[${this.vendor}] ✅ ${rm._apiId} responded`);
+  }
+
   protected getBaseUrl(): string { return ZEN_BASE_URL; }
   protected filterModels(models: ApiModel[]): ApiModel[] {
-    // Exclude free/pickle (those belong to OpenCodeFreeProvider)
-    // Exclude gemini (uses non-standard Google format, not yet supported)
     return models.filter(m =>
       !m.id.includes('free') &&
       !m.id.includes('pickle') &&

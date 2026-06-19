@@ -243,6 +243,11 @@
         {
           "id": "opencode-zen-tree",
           "name": "OpenCode Zen"
+        },
+        {
+          "type": "webview",
+          "id": "opencode-zen-dashboard",
+          "name": "OpenCode Dashboard"
         }
       ]
     },
@@ -315,6 +320,9 @@
     "typescript": "^5.6.0"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.17.3"
+    "@ai-sdk/anthropic": "^3.0.85",
+    "@ai-sdk/openai": "^3.0.73",
+    "@opencode-ai/sdk": "^1.17.3",
+    "ai": "^6.0.208"
   }
 }

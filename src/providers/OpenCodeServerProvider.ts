@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { ServerApiClient } from '../client/multiServerManager';
 import { getModelCapabilities } from '../client/modelRegistry';
+import { streamCompatChat } from './sdk/compatChat';
 
 interface ServerEntry {
   name: string;
@@ -30,6 +31,33 @@ export class OpenCodeServerProvider extends OpenAICompatibleProvider {
 
   protected getEndpoint(_compositeId: string): never { throw new Error('not used'); }
 
+  /**
+   * Stream chat via the local OpenCode Server using the compat HTTP helper.
+   * Builds fresh auth headers via the client on every call.
+   */
+  override async provideLanguageModelChatResponse(
+    model: vscode.LanguageModelChatInformation,
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+    options: vscode.ProvideLanguageModelChatResponseOptions,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    const rm = model as RoutedModelInfo;
+    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+
+    await streamCompatChat(
+      rm._url,
+      rm._headers,
+      rm._apiId,
+      rm.maxOutputTokens,
+      messages,
+      tools,
+      options.modelOptions ?? {},
+      progress,
+      token,
+    );
+  }
+
   protected async getModels(): Promise<RoutedModelInfo[]> {
     const all: RoutedModelInfo[] = [];
 
@@ -47,9 +75,7 @@ export class OpenCodeServerProvider extends OpenAICompatibleProvider {
 
           for (const [modelId, modelData] of Object.entries(provider.models ?? {}) as [string, any][]) {
             const uniqueId = `${serverId}:${modelId}`;
-            // modelData can be a boolean (just connectivity) or a rich object
             const isRich = typeof modelData === 'object' && modelData !== null;
-            // Fall back to registry for capabilities
             const caps = getModelCapabilities(modelId);
             const maxInput: number  = (isRich && modelData.maxTokens)      ?? caps.maxInputTokens;
             const maxOutput: number = (isRich && modelData.maxOutputTokens) ?? caps.maxOutputTokens;

@@ -3,6 +3,8 @@ import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatiblePro
 import { ZEN_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
 import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry';
+import { streamOpenAIChat } from './sdk/openaiChat';
+import { streamAnthropicChat } from './sdk/anthropicChat';
 
 interface ApiModel { id: string; }
 
@@ -30,6 +32,36 @@ export class OpenCodeFreeProvider extends OpenAICompatibleProvider {
   }
 
   getApiKey(): string { return this.apiKey; }
+
+  override async provideLanguageModelChatResponse(
+    model: vscode.LanguageModelChatInformation,
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+    options: vscode.ProvideLanguageModelChatResponseOptions,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    const rm = model as RoutedModelInfo;
+    const apiKey = this.apiKey;
+    if (!apiKey) {
+      throw new Error('API key not configured. Use "OpenCode Zen: Configure Zen Key".');
+    }
+
+    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+    const modelOpts = options.modelOptions ?? {};
+
+    if (rm._apiFormat === 'anthropic') {
+      await streamAnthropicChat(
+        apiKey, `${ZEN_BASE_URL}`, rm._apiId,
+        rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+      );
+    } else {
+      await streamOpenAIChat(
+        apiKey, `${ZEN_BASE_URL}`, rm._apiId,
+        rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+      );
+    }
+    this.out.appendLine(`[Free] ✅ ${rm._apiId} responded`);
+  }
 
   override async provideLanguageModelChatInformation(
     options: { silent: boolean; configuration?: Record<string, unknown> },

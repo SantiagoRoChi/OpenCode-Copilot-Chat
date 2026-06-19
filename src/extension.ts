@@ -11,10 +11,11 @@ import { SecretStorage } from './config/secretStorage';
 import { MultiServerManager, initMultiServerManager } from './client/multiServerManager';
 import { OpenCodeTreeProvider } from './treeview/openCodeTreeProvider';
 import { OpenCodeSubagentTool } from './tools/subagentTool';
-import { DashboardState } from './webview/openCodeWebviewProvider';
+import { DashboardState, OpenCodeWebviewProvider } from './webview/openCodeWebviewProvider';
 import { initModelRegistry } from './client/modelRegistry';
 import { getChatStatusManager, disposeChatStatusManager } from './status/chatStatusItems';
 import { showMissingConfigNotification, showConnectedNotification, showConnectionErrorNotification } from './notifications/chatNotifications';
+import { UsageTracker, formatUsageOutput } from './usage/UsageTracker';
 import { randomUUID } from 'crypto';
 
 let freeProvider: OpenCodeFreeProvider;
@@ -23,8 +24,10 @@ let zenProvider: OpenCodeZenProvider;
 let serverProvider: OpenCodeServerProvider;
 let lmStudioProvider: LMStudioProvider;
 let ollamaProvider: OllamaProvider;
+let usageTracker: UsageTracker;
 let statusBar: StatusBarManager;
 let treeProvider: OpenCodeTreeProvider;
+let webviewProvider: OpenCodeWebviewProvider;
 let connector: OpenCodeConnector;
 let secretStorage: SecretStorage;
 let serverManager: MultiServerManager;
@@ -171,9 +174,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBar.show();
   context.subscriptions.push(statusBar);
 
+  // ── Usage tracking ────────────────────────────────────────────────────────
+
+  usageTracker = new UsageTracker();
+  usageTracker.onDidChangeUsage(stats => {
+    statusBar.updateUsage(stats);
+  });
+  context.subscriptions.push(usageTracker);
+
   treeProvider = new OpenCodeTreeProvider();
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('opencode-zen-tree', treeProvider)
+  );
+
+  // ── Webview dashboard ─────────────────────────────────────────────────────
+
+  webviewProvider = new OpenCodeWebviewProvider(context.extensionUri);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(OpenCodeWebviewProvider.viewType, webviewProvider)
   );
 
   registerCommands(context);
@@ -234,6 +252,7 @@ async function refreshTreeView(): Promise<void> {
   };
 
   treeProvider.refresh(state);
+  webviewProvider?.update(state);
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -504,6 +523,28 @@ function registerCommands(context: vscode.ExtensionContext): void {
   // ── Show output ───────────────────────────────────────────────────────────
   reg('opencode-zen.showOutput', () => {
     vscode.window.showInformationMessage('Use the Output panel and select a provider channel.');
+  });
+
+  // ── Show usage stats ──────────────────────────────────────────────────────
+  reg('opencode-zen.showUsage', () => {
+    const output = vscode.window.createOutputChannel('OpenCode Usage');
+    const stats = usageTracker.getStats();
+    output.appendLine(formatUsageOutput(stats));
+    output.show();
+  });
+
+  // ── Show output log ───────────────────────────────────────────────────────
+  reg('opencode-zen.showOutputLog', () => {
+    vscode.commands.executeCommand('workbench.action.output.toggleOutput');
+    vscode.window.showInformationMessage('Select "OpenCode" from the output channel list.');
+  });
+
+  // ── Refresh global usage ──────────────────────────────────────────────────
+  reg('opencode-zen.refreshGlobal', () => {
+    const stats = usageTracker.getStats();
+    statusBar.updateUsage(stats);
+    void refreshTreeView();
+    vscode.window.showInformationMessage('Global usage refreshed.');
   });
 }
 

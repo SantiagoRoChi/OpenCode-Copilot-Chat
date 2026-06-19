@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { SecretStorage } from '../config/secretStorage';
 import { ServerData } from '../webview/openCodeWebviewProvider';
+import { streamCompatChat } from './sdk/compatChat';
 
 interface OllamaModelListItem {
   name: string;
@@ -62,7 +63,6 @@ export class OllamaProvider extends OpenAICompatibleProvider {
     void this.getModels().then(m => { this.models = m; this.fire(); }).catch(() => undefined);
   }
 
-  /** Persist current in-memory Ollama servers to workspace state. */
   private async persistLocal(): Promise<void> {
     if (!this.storage) return;
     const existing = await this.storage.getLocalServerConfigs();
@@ -72,6 +72,32 @@ export class OllamaProvider extends OpenAICompatibleProvider {
       mine.push({ id, kind: 'ollama', name: entry.name, baseUrl: entry.baseUrl, enabled: true });
     }
     await this.storage.setLocalServerConfigs([...others, ...mine]);
+  }
+
+  /**
+   * Stream chat via Ollama using the compat HTTP helper.
+   */
+  override async provideLanguageModelChatResponse(
+    model: vscode.LanguageModelChatInformation,
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+    options: vscode.ProvideLanguageModelChatResponseOptions,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    const rm = model as RoutedModelInfo;
+    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+
+    await streamCompatChat(
+      rm._url,
+      rm._headers,
+      rm._apiId,
+      rm.maxOutputTokens,
+      messages,
+      tools,
+      options.modelOptions ?? {},
+      progress,
+      token,
+    );
   }
 
   protected async getModels(): Promise<RoutedModelInfo[]> {
@@ -154,7 +180,6 @@ export class OllamaProvider extends OpenAICompatibleProvider {
     super.dispose();
   }
 
-  /** Snapshot of known Ollama servers for the dashboard treeview. */
   getServerList(): ServerData[] {
     const list: ServerData[] = [];
     for (const [id, entry] of this.servers) {

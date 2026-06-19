@@ -3,6 +3,8 @@ import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatiblePro
 import { GO_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
 import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry';
+import { streamAnthropicChat } from './sdk/anthropicChat';
+import { streamOpenAIChat } from './sdk/openaiChat';
 
 interface ApiModel { id: string; }
 
@@ -30,6 +32,41 @@ export class OpenCodeGoProvider extends OpenAICompatibleProvider {
   }
 
   getApiKey(): string { return this.apiKey; }
+
+  /**
+   * Routes each chat request to the correct AI SDK based on the model's API format.
+   * The API key is passed fresh to the SDK on every call — no stale cache.
+   */
+  override async provideLanguageModelChatResponse(
+    model: vscode.LanguageModelChatInformation,
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+    options: vscode.ProvideLanguageModelChatResponseOptions,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    const rm = model as RoutedModelInfo;
+    const apiKey = this.apiKey;
+    if (!apiKey) {
+      throw new Error('Go API key not configured. Use "OpenCode Zen: Configure Go Key".');
+    }
+
+    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+    const modelOpts = options.modelOptions ?? {};
+
+    if (rm._apiFormat === 'anthropic') {
+      await streamAnthropicChat(
+        apiKey, `${GO_BASE_URL}`, rm._apiId,
+        rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+      );
+    } else {
+      // openai or openai-compatible
+      await streamOpenAIChat(
+        apiKey, `${GO_BASE_URL}`, rm._apiId,
+        rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+      );
+    }
+    this.out.appendLine(`[Go] ✅ ${rm._apiId} responded`);
+  }
 
   override async provideLanguageModelChatInformation(
     options: { silent: boolean; configuration?: Record<string, unknown> },

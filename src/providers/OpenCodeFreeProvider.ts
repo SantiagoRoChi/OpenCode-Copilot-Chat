@@ -3,8 +3,8 @@ import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { ZEN_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
 import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry';
-import { streamOpenAIChat } from './sdk/openaiChat';
-import { streamAnthropicChat } from './sdk/anthropicChat';
+import { streamOpenAIChat, TokenUsage as OpenAITokenUsage } from './sdk/openaiChat';
+import { streamAnthropicChat, TokenUsage as AnthropicTokenUsage } from './sdk/anthropicChat';
 
 interface ApiModel { id: string; }
 
@@ -12,12 +12,17 @@ export class OpenCodeFreeProvider extends BaseProvider {
   private apiKey = '';
   private readonly storage: SecretStorage;
   private readonly out = vscode.window.createOutputChannel('OpenCode Free');
+  private onUsageCallback?: (usage: { prompt: number; completion: number; total: number }) => void;
 
   get vendor(): string { return 'opencode-free'; }
 
   constructor(context: vscode.ExtensionContext) {
     super();
     this.storage = new SecretStorage(context);
+  }
+
+  setOnUsageCallback(callback: (usage: { prompt: number; completion: number; total: number }) => void): void {
+    this.onUsageCallback = callback;
   }
 
   async loadApiKey(): Promise<void> {
@@ -49,15 +54,23 @@ export class OpenCodeFreeProvider extends BaseProvider {
     const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
     const modelOpts = options.modelOptions ?? {};
 
+    const handleUsage = (usage: AnthropicTokenUsage | OpenAITokenUsage) => {
+      if (this.onUsageCallback) {
+        this.onUsageCallback(usage);
+      }
+    };
+
     if (rm._apiFormat === 'anthropic') {
       await streamAnthropicChat(
         apiKey, `${ZEN_BASE_URL}`, rm._apiId,
         rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+        handleUsage,
       );
     } else {
       await streamOpenAIChat(
         apiKey, `${ZEN_BASE_URL}`, rm._apiId,
         rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+        handleUsage,
       );
     }
     this.out.appendLine(`[Free] ✅ ${rm._apiId} responded`);

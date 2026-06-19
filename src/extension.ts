@@ -179,8 +179,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   usageTracker = new UsageTracker();
   usageTracker.onDidChangeUsage(stats => {
     statusBar.updateUsage(stats);
+    void refreshTreeView(); // Update dashboard when usage changes
   });
   context.subscriptions.push(usageTracker);
+
+  // Connect provider usage callbacks
+  freeProvider.setOnUsageCallback(usage => {
+    usageTracker.recordRequest(
+      randomUUID(),                    // requestId
+      randomUUID(),                    // sessionId
+      'free-model',                    // modelId
+      'Free Model',                    // modelName
+      'opencode-free',                 // provider
+      { prompt: usage.prompt, completion: usage.completion, total: usage.total },
+      undefined,                       // duration
+      undefined                        // meta
+    );
+  });
+
+  goProvider.setOnUsageCallback(usage => {
+    usageTracker.recordRequest(
+      randomUUID(),
+      randomUUID(),
+      'go-model',
+      'Go Model',
+      'opencode-go',
+      { prompt: usage.prompt, completion: usage.completion, total: usage.total },
+      undefined,
+      undefined
+    );
+  });
+
+  zenProvider.setOnUsageCallback(usage => {
+    usageTracker.recordRequest(
+      randomUUID(),
+      randomUUID(),
+      'zen-model',
+      'Zen Model',
+      'opencode-zen',
+      { prompt: usage.prompt, completion: usage.completion, total: usage.total },
+      undefined,
+      undefined
+    );
+  });
 
   treeProvider = new OpenCodeTreeProvider();
   context.subscriptions.push(
@@ -241,18 +282,71 @@ async function refreshTreeView(): Promise<void> {
     }
   }
 
+  // Get model families from Zen and Go providers
+  const zenModels = zenProvider.getCurrentModels();
+  const goModels = goProvider.getCurrentModels();
+
+  // Build family groups
+  const zenFamilies = buildModelFamilies(zenModels);
+  const goFamilies = buildModelFamilies(goModels);
+
+  // Get usage stats
+  const usageStats = usageTracker.getStats();
+
+  // Calculate Zen stats (opencode-free, opencode-zen)
+  let zenTotalTokens = 0;
+  let zenTotalRequests = 0;
+  for (const [provider, data] of Object.entries(usageStats.byProvider)) {
+    if (provider === 'opencode-free' || provider === 'opencode-zen') {
+      zenTotalTokens += data.tokens.total;
+      zenTotalRequests += data.requests;
+    }
+  }
+
+  // Calculate Go stats
+  let goTotalTokens = 0;
+  let goTotalRequests = 0;
+  for (const [provider, data] of Object.entries(usageStats.byProvider)) {
+    if (provider === 'opencode-go') {
+      goTotalTokens += data.tokens.total;
+      goTotalRequests += data.requests;
+    }
+  }
+
   const state: DashboardState = {
     servers: allServers,
     zenKey: zenProvider.getApiKey() ? '***' : '',
     goKey: goProvider.getApiKey() ? '***' : '',
-    zenFamilies: [],
-    goFamilies: [],
-    zenStats: { totalRequests: 0, totalTokens: { total: 0 } },
-    goStats: { totalRequests: 0, totalTokens: { total: 0 } },
+    zenFamilies,
+    goFamilies,
+    zenStats: { totalRequests: zenTotalRequests, totalTokens: { total: zenTotalTokens } },
+    goStats: { totalRequests: goTotalRequests, totalTokens: { total: goTotalTokens } },
   };
 
   treeProvider.refresh(state);
   webviewProvider?.update(state);
+}
+
+function buildModelFamilies(models: { id: string; name: string; family: string }[]): Array<{ name: string; count: number; models: string[] }> {
+  const families = new Map<string, string[]>();
+
+  for (const model of models) {
+    const family = model.family || 'Unknown';
+    if (!families.has(family)) {
+      families.set(family, []);
+    }
+    families.get(family)!.push(model.name || model.id);
+  }
+
+  const result: Array<{ name: string; count: number; models: string[] }> = [];
+  for (const [name, modelList] of families) {
+    result.push({ name, count: modelList.length, models: modelList });
+  }
+
+  // Sort by count descending
+  result.sort((a, b) => b.count - a.count);
+
+  return result;
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -515,9 +609,11 @@ function registerCommands(context: vscode.ExtensionContext): void {
     }
   });
 
-  // ── Clear usage (no-op kept for backwards compat with keybindings) ─────────
+  // ── Clear usage ───────────────────────────────────────────────────────────
   reg('opencode-zen.clearUsage', () => {
-    vscode.window.showInformationMessage('Usage tracking removed in this version.');
+    usageTracker.clear();
+    vscode.window.showInformationMessage('Usage stats cleared.');
+    void refreshTreeView();
   });
 
   // ── Show output ───────────────────────────────────────────────────────────

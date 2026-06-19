@@ -23,6 +23,33 @@
 
 VS Code extension that registers **LM Studio**, **Ollama**, and **OpenCode** as Language Model providers for GitHub Copilot Chat. Use your own local or remote AI models directly in Copilot Chat.
 
+## 📁 Architecture
+
+```
+src/
+├── providers/
+│   ├── BaseProvider.ts              # Base class for all providers
+│   ├── sdk/
+│   │   ├── anthropicChat.ts         # Anthropic SDK handler
+│   │   ├── openaiChat.ts            # OpenAI SDK handler
+│   │   └── utils.ts                 # Shared message conversion utilities
+│   ├── LMStudioProvider.ts          # LM Studio (OpenAI-compatible API)
+│   ├── OllamaProvider.ts            # Ollama (OpenAI-compatible API)
+│   ├── OpenCodeFreeProvider.ts      # OpenCode Free tier
+│   ├── OpenCodeGoProvider.ts        # OpenCode Go tier
+│   ├── OpenCodeServerProvider.ts    # OpenCode Server
+│   └── OpenCodeZenProvider.ts       # OpenCode Zen tier
+├── client/                          # API clients
+├── config/                          # Settings and storage
+└── ...
+```
+
+**Key Design Decisions:**
+- All providers extend `BaseProvider` (formerly `OpenAICompatibleProvider`)
+- SDK-based handlers (`anthropicChat.ts`, `openaiChat.ts`) use official AI SDK packages
+- Shared utilities in `sdk/utils.ts` eliminate code duplication
+- LM Studio and Ollama use OpenAI-compatible API (not custom SSE parsing)
+
 ## ✨ Supported Providers
 
 | Provider | Connection | Models | Features |
@@ -119,44 +146,16 @@ Search for "+ Providers on Copilot Chat" in the Extensions panel.
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-### ThinkingEffort
+## 📦 Installation
 
-- Modelos de razonamiento (GPT, Claude, Gemini, DeepSeek) muestran badge de configuración
-- Niveles: low / medium / high
-- Se configura desde el selector de modelos
+### From VS Code Marketplace
+Search for "+ Providers on Copilot Chat" in the Extensions panel.
 
-### Streaming y Tool Calling
+### From VSIX
+1. Download `.vsix` from [Releases](https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat/releases)
+2. Run: `code --install-extension opencode-zen-*.vsix`
 
-- SSE streaming en tiempo real
-- Tool calling con JSON repair automático
-- Reasoning content como bloques colapsables (`LanguageModelThinkingPart`)
-- Soporte para `reasoning_content` (DeepSeek, MiMo, Kimi)
-
-### Subagent Tool
-
-Herramienta `opencode_subagent` registrada para que Copilot Chat pueda delegar tareas a un provider OpenCode:
-
-```json
-{
-  "name": "opencode_subagent",
-  "query": "Ejecuta ls -la en la terminal",
-  "description": "Listando archivos del directorio actual"
-}
-```
-
-- Delega al primer provider disponible (Free → Go → Zen)
-- Temperature 0, sin tools adicionales
-- Retorna resultado con metadata
-
-## 📦 Instalación
-
-### Descargar VSIX
-
-```bash
-code --install-extension opencode-zen-*.vsix
-```
-
-### Desde código fuente
+### From Source
 
 ```bash
 git clone https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat.git
@@ -206,31 +205,67 @@ Los servidores aparecen como proveedores separados en el selector de modelos.
 | `Show Output` | Ver logs de debug |
 | `Clear Usage Stats` | Limpiar estadísticas |
 
-## 🏗️ Arquitectura
+## 🏗️ Architecture
 
 ```
 extension.ts
 ├── providers/
-│   ├── BaseOpenCodeProvider.ts     (abstract, /chat/completions)
-│   ├── OpenCodeFreeProvider.ts     (free models, Zen key)
-│   ├── OpenCodeGoProvider.ts       (Go models, Go key)
-│   ├── OpenCodeZenProvider.ts      (paid models, Zen key)
-│   └── OpenCodeServerProvider.ts   (servers, session API)
+│   ├── BaseProvider.ts              # Base class (model caching, events)
+│   ├── sdk/
+│   │   ├── anthropicChat.ts         # Anthropic SDK handler
+│   │   ├── openaiChat.ts            # OpenAI SDK handler  
+│   │   └── utils.ts                 # Shared message conversion
+│   ├── LMStudioProvider.ts          # LM Studio (OpenAI-compatible)
+│   ├── OllamaProvider.ts            # Ollama (OpenAI-compatible)
+│   ├── OpenCodeFreeProvider.ts      # Free tier models
+│   ├── OpenCodeGoProvider.ts        # Go tier models (Anthropic SDK)
+│   ├── OpenCodeZenProvider.ts       # Zen tier models
+│   └── OpenCodeServerProvider.ts    # Custom OpenCode servers
 ├── client/
-│   ├── opencodeClient.ts           (HTTP streaming)
-│   ├── multiServerManager.ts       (server connections)
-│   ├── modelRegistry.ts            (models.dev live data)
+│   ├── multiServerManager.ts        # Server connection management
+│   ├── modelRegistry.ts             # Model capabilities from models.dev
 │   └── types.ts
-├── streaming/
-│   ├── responseStreamer.ts         (SSE parser)
-│   └── messageConverter.ts         (format conversion)
 ├── config/
-│   └── secretStorage.ts            (API keys)
+│   └── secretStorage.ts             # API key storage
 ├── integration/
-│   └── opencodeConnector.ts        (auto-detection)
+│   └── opencodeConnector.ts         # Auto-detect local OpenCode
+├── tools/
+│   └── subagentTool.ts              # opencode_subagent tool
 └── treeview/
-    └── openCodeTreeProvider.ts     (sidebar)
+    └── openCodeTreeProvider.ts      # Sidebar panel
 ```
+
+**Provider Architecture:**
+- All providers extend `BaseProvider` (handles model caching, events, token counting)
+- SDK-based handlers (`anthropicChat.ts`, `openaiChat.ts`) use official AI SDK packages
+- Shared utilities in `sdk/utils.ts` eliminate code duplication
+- LM Studio and Ollama use OpenAI-compatible API endpoints
+
+## 📝 Recent Changes (2026-06-19)
+
+### AI SDK v6 Migration
+- **Architecture refactor**: Migrated from custom HTTP streaming to official AI SDK
+  - `@ai-sdk/openai` for OpenAI-compatible providers
+  - `@ai-sdk/anthropic` for Anthropic API providers
+- **Renamed**: `OpenAICompatibleProvider` → `BaseProvider` (reflects multi-provider support)
+- **Added**: Shared utilities in `src/providers/sdk/utils.ts`
+  - `convertMessages()` - VS Code to AI SDK message format
+  - `mapModelOptions()` - Temperature/topP/maxTokens mapping
+  - `trackToolNames()` - Tool name tracking by callId
+
+### Code Cleanup
+- **Removed** (~1000 lines of dead code):
+  - `src/providers/sdk/compatChat.ts` - replaced by SDK handlers
+  - `src/tools/toolCallAdapter.ts` - replaced by AI SDK native handling
+  - `src/client/opencodeClient.ts` - unused
+  - Duplicate message conversion logic
+- **Cleaned**: All `.js` and `.js.map` files from `src/` (build only in `out/`)
+
+### Bug Fixes
+- Fixed tool schema format (use `jsonSchema()` wrapper)
+- Fixed tool call property (`input` instead of `args`)
+- Fixed reasoning blocks (`reasoningText` instead of `thinkingText`)
+- Fixed auth header caching (pass API key directly to SDK)
 
 ## ⚙️ Configuración
 

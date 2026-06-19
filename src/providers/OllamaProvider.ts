@@ -63,6 +63,24 @@ export class OllamaProvider extends BaseProvider {
     void this.getModels().then(m => { this.models = m; this.fire(); }).catch(() => undefined);
   }
 
+  getServerList(): ServerData[] {
+    const result: ServerData[] = [];
+    for (const [id, entry] of this.servers) {
+      result.push({
+        id,
+        name: entry.name,
+        url: entry.baseUrl,
+        available: entry.connected,
+        models: this.models
+          .filter(m => m.id.startsWith(`${id}:`))
+          .map(m => m.id),
+        providerCount: 1,
+        type: 'ollama-plus',
+      });
+    }
+    return result;
+  }
+
   private async persistLocal(): Promise<void> {
     if (!this.storage) return;
     const existing = await this.storage.getLocalServerConfigs();
@@ -181,21 +199,5 @@ export class OllamaProvider extends BaseProvider {
   override dispose(): void {
     this.out.dispose();
     super.dispose();
-  }
-
-  getServerList(): ServerData[] {
-    const list: ServerData[] = [];
-    for (const [id, entry] of this.servers) {
-      list.push({
-        id,
-        name: entry.name,
-        url: entry.baseUrl,
-        available: entry.connected,
-        models: [],
-        providerCount: 0,
-        type: 'ollama-plus',
-      });
-    }
-    return list;
   }
 }

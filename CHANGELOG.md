@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased] - 2026-06-19
+
+### 🏗️ Architecture Refactor: AI SDK v6 Migration
+
+**Major refactor of the provider architecture to use official AI SDK packages (`@ai-sdk/openai`, `@ai-sdk/anthropic`).**
+
+#### Changed
+- **BREAKING**: `OpenAICompatibleProvider` renamed to `BaseProvider` (reflects multi-provider support: OpenAI, Anthropic, and compatible)
+- **BREAKING**: Removed custom HTTP streaming implementation in favor of official AI SDK
+  - `streamOpenAIChat()` now uses `@ai-sdk/openai` with `streamText()`
+  - `streamAnthropicChat()` now uses `@ai-sdk/anthropic` with `streamText()`
+  - Both handlers use shared utilities in `src/providers/sdk/utils.ts`
+
+#### Removed
+- **Dead code elimination (~1000 lines)**:
+  - `src/providers/sdk/compatChat.ts` - replaced by SDK-based handlers
+  - `src/tools/toolCallAdapter.ts` - replaced by AI SDK's native tool handling
+  - `src/client/opencodeClient.ts` - unused HTTP client
+  - Duplicate message conversion logic in both SDK handlers
+- **Compiled artifacts**: Removed all `.js` and `.js.map` files from `src/` (build output now only in `out/`)
+
+#### Added
+- `src/providers/sdk/utils.ts` - Shared utilities:
+  - `convertMessages()` - VS Code to AI SDK message format conversion
+  - `mapModelOptions()` - Temperature/topP/maxTokens mapping
+  - `trackToolNames()` - Tool name tracking by callId
+- `.gitignore` rules for `src/**/*.js` and `src/**/*.js.map`
+
+#### Fixed
+- **Tool schema format**: Now uses `jsonSchema()` wrapper from `@ai-sdk/provider-utils` instead of raw JSON
+- **Tool call property**: Changed from `args` to `input` (AI SDK v6 standard)
+- **Reasoning blocks**: Changed from `thinkingText` to `reasoningText` (AI SDK v6 standard)
+- **Auth header caching**: Fixed by passing API key directly to SDK on every call (no stale cache)
+
+#### Files Changed
+- Renamed: `src/providers/OpenAICompatibleProvider.ts` → `src/providers/BaseProvider.ts`
+- Updated: All 6 provider imports to use new `BaseProvider` name
+- All providers (LM Studio, Ollama, OpenCode Server) now use `streamOpenAIChat()`
+
+---
+
 ## [3.5.0] - 2026-06-17
 
 ### Fixed

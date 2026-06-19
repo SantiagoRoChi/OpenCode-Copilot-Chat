@@ -91,6 +91,11 @@ export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
     }).catch(() => undefined);
   }
 
+  /** Get current cached models without triggering a fetch */
+  getCurrentModels(): RoutedModelInfo[] {
+    return this.models;
+  }
+
   // ── provideTokenCount ─────────────────────────────────────────────────────
 
   async provideTokenCount(

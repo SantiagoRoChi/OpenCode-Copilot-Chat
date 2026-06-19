@@ -3,8 +3,8 @@ import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { ZEN_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
 import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry';
-import { streamAnthropicChat } from './sdk/anthropicChat';
-import { streamOpenAIChat } from './sdk/openaiChat';
+import { streamAnthropicChat, TokenUsage as AnthropicTokenUsage } from './sdk/anthropicChat';
+import { streamOpenAIChat, TokenUsage as OpenAITokenUsage } from './sdk/openaiChat';
 
 interface ApiModel { id: string; }
 
@@ -12,12 +12,17 @@ export class OpenCodeZenProvider extends BaseProvider {
   protected apiKey = '';
   private readonly storage: SecretStorage;
   protected readonly out = vscode.window.createOutputChannel('OpenCode Zen');
+  private onUsageCallback?: (usage: { prompt: number; completion: number; total: number }) => void;
 
   get vendor(): string { return 'opencode-zen'; }
 
   constructor(context: vscode.ExtensionContext) {
     super();
     this.storage = new SecretStorage(context);
+  }
+
+  setOnUsageCallback(callback: (usage: { prompt: number; completion: number; total: number }) => void): void {
+    this.onUsageCallback = callback;
   }
 
   async loadApiKey(): Promise<void> {
@@ -67,16 +72,24 @@ export class OpenCodeZenProvider extends BaseProvider {
     const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
     const modelOpts = options.modelOptions ?? {};
 
+    const handleUsage = (usage: AnthropicTokenUsage | OpenAITokenUsage) => {
+      if (this.onUsageCallback) {
+        this.onUsageCallback(usage);
+      }
+    };
+
     if (rm._apiFormat === 'anthropic') {
       await streamAnthropicChat(
         apiKey, `${ZEN_BASE_URL}`, rm._apiId,
         rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+        handleUsage,
       );
     } else {
       // openai or openai-compatible
       await streamOpenAIChat(
         apiKey, `${ZEN_BASE_URL}`, rm._apiId,
         rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+        handleUsage,
       );
     }
     this.out.appendLine(`[${this.vendor}] ✅ ${rm._apiId} responded`);

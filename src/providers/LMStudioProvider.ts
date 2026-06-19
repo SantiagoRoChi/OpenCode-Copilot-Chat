@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { BaseProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
+import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { SecretStorage } from '../config/secretStorage';
 import { ServerData } from '../webview/openCodeWebviewProvider';
 import { streamOpenAIChat } from './sdk/openaiChat';

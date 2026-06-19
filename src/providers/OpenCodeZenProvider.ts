@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { BaseProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
+import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { ZEN_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
 import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry';

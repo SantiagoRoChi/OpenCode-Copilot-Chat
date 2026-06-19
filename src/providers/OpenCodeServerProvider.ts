@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { ServerApiClient } from '../client/multiServerManager';
 import { getModelCapabilities } from '../client/modelRegistry';
-import { streamCompatChat } from './sdk/compatChat';
+import { streamOpenAIChat } from './sdk/openaiChat';
 
 interface ServerEntry {
   name: string;
@@ -32,7 +32,7 @@ export class OpenCodeServerProvider extends OpenAICompatibleProvider {
   protected getEndpoint(_compositeId: string): never { throw new Error('not used'); }
 
   /**
-   * Stream chat via the local OpenCode Server using the compat HTTP helper.
+   * Stream chat via the local OpenCode Server using the OpenAI SDK.
    * Builds fresh auth headers via the client on every call.
    */
   override async provideLanguageModelChatResponse(
@@ -45,9 +45,13 @@ export class OpenCodeServerProvider extends OpenAICompatibleProvider {
     const rm = model as RoutedModelInfo;
     const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
 
-    await streamCompatChat(
-      rm._url,
-      rm._headers,
+    // OpenCode Server uses OpenAI-compatible API
+    const baseUrl = rm._url.replace(/\/v1\/chat\/completions$/, '');
+    const apiKey = rm._headers['Authorization']?.replace('Bearer ', '') ?? '';
+
+    await streamOpenAIChat(
+      apiKey,
+      baseUrl,
       rm._apiId,
       rm.maxOutputTokens,
       messages,

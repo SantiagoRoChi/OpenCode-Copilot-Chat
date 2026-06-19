@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { SecretStorage } from '../config/secretStorage';
 import { ServerData } from '../webview/openCodeWebviewProvider';
-import { streamCompatChat } from './sdk/compatChat';
+import { streamOpenAIChat } from './sdk/openaiChat';
 
 // Response shape from /api/v1/models (LM Studio native API)
 interface LMStudioModel {
@@ -76,7 +76,7 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
   }
 
   /**
-   * Stream chat via LM Studio using the compat HTTP helper.
+   * Stream chat via LM Studio using the OpenAI SDK.
    */
   override async provideLanguageModelChatResponse(
     model: vscode.LanguageModelChatInformation,
@@ -88,9 +88,12 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
     const rm = model as RoutedModelInfo;
     const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
 
-    await streamCompatChat(
-      rm._url,
-      rm._headers,
+    // LM Studio uses OpenAI-compatible API at /v1/chat/completions
+    const baseUrl = rm._url.replace(/\/v1\/chat\/completions$/, '');
+
+    await streamOpenAIChat(
+      '', // LM Studio doesn't require API key
+      baseUrl,
       rm._apiId,
       rm.maxOutputTokens,
       messages,

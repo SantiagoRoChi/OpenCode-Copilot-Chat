@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { SecretStorage } from '../config/secretStorage';
 import { ServerData } from '../webview/openCodeWebviewProvider';
-import { streamCompatChat } from './sdk/compatChat';
+import { streamOpenAIChat } from './sdk/openaiChat';
 
 interface OllamaModelListItem {
   name: string;
@@ -75,7 +75,7 @@ export class OllamaProvider extends OpenAICompatibleProvider {
   }
 
   /**
-   * Stream chat via Ollama using the compat HTTP helper.
+   * Stream chat via Ollama using the OpenAI SDK.
    */
   override async provideLanguageModelChatResponse(
     model: vscode.LanguageModelChatInformation,
@@ -87,9 +87,12 @@ export class OllamaProvider extends OpenAICompatibleProvider {
     const rm = model as RoutedModelInfo;
     const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
 
-    await streamCompatChat(
-      rm._url,
-      rm._headers,
+    // Ollama uses OpenAI-compatible API at /v1/chat/completions
+    const baseUrl = rm._url.replace(/\/v1\/chat\/completions$/, '');
+
+    await streamOpenAIChat(
+      '', // Ollama doesn't require API key by default
+      baseUrl,
       rm._apiId,
       rm.maxOutputTokens,
       messages,

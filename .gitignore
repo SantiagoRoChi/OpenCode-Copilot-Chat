@@ -8,5 +8,9 @@ dist/
 .agents/
 skills-lock.json
 .vscode-test-web/
+
+# Compiled JavaScript files (should only be in out/)
+src/**/*.js
+src/**/*.js.map
 src/**/*.js
 src/**/*.js.map

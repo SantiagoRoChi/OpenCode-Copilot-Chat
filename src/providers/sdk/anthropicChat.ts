@@ -2,14 +2,10 @@ import * as vscode from 'vscode';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { streamText, LanguageModel, tool } from 'ai';
 import { jsonSchema } from '@ai-sdk/provider-utils';
+import { convertMessages, mapModelOptions } from './utils';
 
 /**
  * Streams a chat completion using the Anthropic Messages API via @ai-sdk/anthropic.
- *
- * Handles text output, tool calls, and Anthropic thinking/reasoning blocks,
- * reporting each as the appropriate vscode.LanguageModelResponsePart.
- *
- * The API key and base URL are passed explicitly on every call — no stale cache.
  */
 export async function streamAnthropicChat(
   apiKey: string,
@@ -22,10 +18,7 @@ export async function streamAnthropicChat(
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
   token: vscode.CancellationToken,
 ): Promise<void> {
-  const anthropic = createAnthropic({
-    apiKey,
-    baseURL: baseUrl,
-  });
+  const anthropic = createAnthropic({ apiKey, baseURL: baseUrl });
 
   const vsCodeMessages = convertMessages(messages);
   const systemMessage = vsCodeMessages.find(m => m.role === 'system');
@@ -38,20 +31,10 @@ export async function streamAnthropicChat(
       sdkTools[t.name] = tool({
         description: t.description,
         inputSchema: jsonSchema(t.inputSchema ?? { type: 'object', properties: {} }),
-        execute: async (input: unknown) => {
-          // Tool execution is handled by VS Code's tool system
-          // This is a placeholder that returns the input
-          return input;
-        },
+        execute: async (input: unknown) => input,
       });
     }
   }
-
-  // Map modelOptions to SDK settings
-  const sdkSettings: Record<string, unknown> = {};
-  if (modelOptions.temperature !== undefined) sdkSettings.temperature = modelOptions.temperature;
-  if (modelOptions.topP !== undefined) sdkSettings.topP = modelOptions.topP;
-  if (modelOptions.maxOutputTokens !== undefined) sdkSettings.maxOutputTokens = modelOptions.maxOutputTokens;
 
   const abort = new AbortController();
   token.onCancellationRequested(() => abort.abort());
@@ -65,11 +48,8 @@ export async function streamAnthropicChat(
     maxOutputTokens: maxTokens ?? 8192,
     tools: Object.keys(sdkTools).length > 0 ? (sdkTools as any) : undefined,
     abortSignal: abort.signal,
-    ...sdkSettings,
-    onError: (event) => {
-      streamError = event.error;
-      console.error('[AnthropicChat] stream error:', event.error);
-    },
+    ...mapModelOptions(modelOptions),
+    onError: (event) => { streamError = event.error; },
   });
 
   try {
@@ -78,10 +58,7 @@ export async function streamAnthropicChat(
       progress.report(new vscode.LanguageModelTextPart(textPart));
     }
 
-    // If stream had an error, throw it now
-    if (streamError) {
-      throw streamError instanceof Error ? streamError : new Error(String(streamError));
-    }
+    if (streamError) throw streamError;
 
     // Report tool calls if any
     const toolCalls = await result.toolCalls;
@@ -89,115 +66,18 @@ export async function streamAnthropicChat(
       for (const tc of toolCalls) {
         if (token.isCancellationRequested) break;
         progress.report(
-          new vscode.LanguageModelToolCallPart(
-            tc.toolCallId,
-            tc.toolName,
-            tc.input as Record<string, unknown>,
-          ),
+          new vscode.LanguageModelToolCallPart(tc.toolCallId, tc.toolName, tc.input as Record<string, unknown>),
         );
       }
     }
 
-    // Report thinking/reasoning if the SDK exposes it
-    const reasoningText = await result.reasoningText.then(v => v, () => undefined);
-    if (reasoningText && typeof reasoningText === 'string') {
+    // Report reasoning if available
+    const reasoningText = await Promise.resolve(result.reasoningText).catch(() => undefined);
+    if (reasoningText) {
       const ThinkingPart = (vscode as any).LanguageModelThinkingPart;
-      if (ThinkingPart) {
-        progress.report(new ThinkingPart(reasoningText) as vscode.LanguageModelResponsePart);
-      }
+      if (ThinkingPart) progress.report(new ThinkingPart(reasoningText));
     }
   } catch (err: any) {
     throw new Error(`Anthropic stream error: ${err.message ?? err}`);
   }
-}
-
-// ── Message conversion ─────────────────────────────────────────────────────
-
-function convertMessages(
-  messages: readonly vscode.LanguageModelChatRequestMessage[],
-): Array<{ role: string; content: any }> {
-  const result: Array<{ role: string; content: any }> = [];
-  
-  // Track tool names by callId from ToolCallParts to use in ToolResultParts
-  const toolNameByCallId = new Map<string, string>();
-
-  // First pass: collect all tool call names
-  for (const msg of messages) {
-    for (const part of msg.content) {
-      if (part instanceof vscode.LanguageModelToolCallPart) {
-        toolNameByCallId.set(part.callId, part.name);
-      }
-    }
-  }
-
-  for (const msg of messages) {
-    const isAssistant = msg.role === vscode.LanguageModelChatMessageRole.Assistant;
-    const isSystem = msg.role === (vscode as any).LanguageModelChatMessageRole.System;
-
-    if (isSystem) {
-      const text = msg.content
-        .filter((p): p is vscode.LanguageModelTextPart => p instanceof vscode.LanguageModelTextPart)
-        .map(p => p.value)
-        .join('\n\n');
-      result.push({ role: 'system', content: text });
-      continue;
-    }
-
-    const role = isAssistant ? 'assistant' : 'user';
-    const textParts: vscode.LanguageModelTextPart[] = [];
-    const toolCallParts: vscode.LanguageModelToolCallPart[] = [];
-    const toolResultParts: vscode.LanguageModelToolResultPart[] = [];
-
-    for (const part of msg.content) {
-      if (part instanceof vscode.LanguageModelTextPart) {
-        textParts.push(part);
-      } else if (part instanceof vscode.LanguageModelToolCallPart) {
-        toolCallParts.push(part);
-      } else if (part instanceof vscode.LanguageModelToolResultPart) {
-        toolResultParts.push(part);
-      }
-    }
-
-    // Build content array in AI SDK v6 format
-    const contentArray: any[] = [];
-
-    for (const tp of textParts) {
-      contentArray.push({ type: 'text', text: tp.value });
-    }
-
-    for (const tc of toolCallParts) {
-      contentArray.push({
-        type: 'tool-call',
-        toolCallId: tc.callId,
-        toolName: tc.name,
-        input: tc.input,
-      });
-    }
-
-    // Tool results go in a separate 'tool' role message
-    const toolResults: any[] = [];
-    for (const tr of toolResultParts) {
-      const text = tr.content
-        .filter((p): p is vscode.LanguageModelTextPart => p instanceof vscode.LanguageModelTextPart)
-        .map(p => p.value)
-        .join('');
-      // Get the tool name from our tracking map, fallback to 'unknown' if not found
-      const toolName = toolNameByCallId.get(tr.callId) ?? 'unknown';
-      toolResults.push({
-        type: 'tool-result',
-        toolCallId: tr.callId,
-        toolName: toolName,
-        output: { type: 'text', value: text },
-      });
-    }
-
-    if (toolResults.length > 0) {
-      result.push({ role: 'tool', content: toolResults });
-    }
-    if (contentArray.length > 0) {
-      result.push({ role, content: contentArray });
-    }
-  }
-
-  return result;
 }

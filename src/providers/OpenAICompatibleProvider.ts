@@ -21,7 +21,7 @@ export interface RoutedModelInfo extends vscode.LanguageModelChatInformation {
 }
 
 /**
- * Base class for all providers.
+ * Base class for all LM providers (OpenAI, Anthropic, and compatible).
  *
  * Responsibilities:
  *  - Model discovery and caching (provideLanguageModelChatInformation)
@@ -33,7 +33,7 @@ export interface RoutedModelInfo extends vscode.LanguageModelChatInformation {
  *  - provideLanguageModelChatResponse(): stream the chat response
  *    using the AI SDK handlers in ./sdk/
  */
-export abstract class OpenAICompatibleProvider implements vscode.LanguageModelChatProvider {
+export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
   protected models: RoutedModelInfo[] = [];
   protected lastFetch = 0;
   protected readonly cacheTtlMs = 5 * 60 * 1000;

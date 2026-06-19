@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
+import { BaseProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { ZEN_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
 import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry';
@@ -8,7 +8,7 @@ import { streamAnthropicChat } from './sdk/anthropicChat';
 
 interface ApiModel { id: string; }
 
-export class OpenCodeFreeProvider extends OpenAICompatibleProvider {
+export class OpenCodeFreeProvider extends BaseProvider {
   private apiKey = '';
   private readonly storage: SecretStorage;
   private readonly out = vscode.window.createOutputChannel('OpenCode Free');

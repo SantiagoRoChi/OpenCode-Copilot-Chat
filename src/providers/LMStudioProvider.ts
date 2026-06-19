@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
+import { BaseProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { SecretStorage } from '../config/secretStorage';
 import { ServerData } from '../webview/openCodeWebviewProvider';
 import { streamOpenAIChat } from './sdk/openaiChat';
@@ -27,7 +27,7 @@ interface ServerEntry {
   connected: boolean;
 }
 
-export class LMStudioProvider extends OpenAICompatibleProvider {
+export class LMStudioProvider extends BaseProvider {
   private readonly servers = new Map<string, ServerEntry>();
   private readonly out = vscode.window.createOutputChannel('LM Studio');
   private readonly storage?: SecretStorage;

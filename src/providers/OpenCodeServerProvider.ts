@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
+import { BaseProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { ServerApiClient } from '../client/multiServerManager';
 import { getModelCapabilities } from '../client/modelRegistry';
 import { streamOpenAIChat } from './sdk/openaiChat';
@@ -11,7 +11,7 @@ interface ServerEntry {
   connected: boolean;
 }
 
-export class OpenCodeServerProvider extends OpenAICompatibleProvider {
+export class OpenCodeServerProvider extends BaseProvider {
   private readonly servers = new Map<string, ServerEntry>();
   private readonly out = vscode.window.createOutputChannel('OpenCode Servers');
 

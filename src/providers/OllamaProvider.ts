@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OpenAICompatibleProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
+import { BaseProvider, RoutedModelInfo } from './OpenAICompatibleProvider';
 import { SecretStorage } from '../config/secretStorage';
 import { ServerData } from '../webview/openCodeWebviewProvider';
 import { streamOpenAIChat } from './sdk/openaiChat';
@@ -25,7 +25,7 @@ interface ServerEntry {
   connected: boolean;
 }
 
-export class OllamaProvider extends OpenAICompatibleProvider {
+export class OllamaProvider extends BaseProvider {
   private readonly servers = new Map<string, ServerEntry>();
   private readonly showCache = new Map<string, RoutedModelInfo>();
   private readonly out = vscode.window.createOutputChannel('Ollama');

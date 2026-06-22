@@ -113,8 +113,8 @@ async function handleOpenCodeRequest(
   const messages: vscode.LanguageModelChatMessage[] = [];
 
   // Add conversation history from chat context
-  for (const historyEntry of chatContext.history) {
-    if (historyEntry instanceof vscode.ChatRequestMarkdownPart) {
+  for (const historyEntry of _chatContext.history) {
+    if (historyEntry instanceof vscode.ChatResponseMarkdownPart) {
       // This is a previous user message or assistant response
       // The history is already formatted, we pass it as context
     }
@@ -131,14 +131,14 @@ async function handleOpenCodeRequest(
     await selectedProvider.provider.provideLanguageModelChatResponse(
       selectedModel,
       messages,
-      { tools: request.toolReferences.map(t => t as any) },
+      { tools: request.toolReferences.map(t => t as any), toolMode: vscode.LanguageModelChatToolMode.Auto as any },
       {
         report: (part) => {
           if (part instanceof vscode.LanguageModelTextPart) {
             stream.markdown(part.value);
           } else if (part instanceof vscode.LanguageModelToolCallPart) {
             // Tool calls are handled by VS Code automatically
-            stream.toolCall(part);
+            stream.markdown(`> 🔧 Tool called: **${part.name}**`);
           }
         },
       },

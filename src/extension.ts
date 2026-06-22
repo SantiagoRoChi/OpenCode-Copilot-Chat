@@ -460,9 +460,21 @@ async function refreshTreeView(): Promise<void> {
     zenStats: { totalRequests: zenTotalRequests, totalTokens: { total: zenTotalTokens }, totalCost: zenTotalCost },
     goStats: { totalRequests: goTotalRequests, totalTokens: { total: goTotalTokens }, totalCost: goTotalCost },
     goBurnRate: openCodeUsage?.goLimits ? {
-      session: openCodeUsage.goLimits.rolling,
-      weekly: openCodeUsage.goLimits.weekly,
-      monthly: openCodeUsage.goLimits.monthly,
+      session: {
+        percent: openCodeUsage.goLimits.rolling.percent,
+        spent: 0,
+        limit: 0,
+      },
+      weekly: {
+        percent: openCodeUsage.goLimits.weekly.percent,
+        spent: 0,
+        limit: 0,
+      },
+      monthly: {
+        percent: openCodeUsage.goLimits.monthly.percent,
+        spent: 0,
+        limit: 0,
+      },
     } : usageStats.goUsage ? {
       session: usageStats.goUsage.session,
       weekly: usageStats.goUsage.weekly,

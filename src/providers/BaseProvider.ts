@@ -22,7 +22,27 @@ export interface RoutedModelInfo extends vscode.LanguageModelChatInformation {
    * Configuration schema for model options shown in the chat UI.
    * This allows users to configure reasoning effort, temperature, etc.
    */
-  configurationSchema?: vscode.LanguageModelConfigurationSchema;
+  configurationSchema?: LanguageModelConfigurationSchema;
+}
+
+/**
+ * Local interface for LanguageModelConfigurationSchema
+ * since it may not be available in all VS Code API versions.
+ */
+export interface LanguageModelConfigurationProperty {
+  type: string;
+  title?: string;
+  description?: string;
+  default?: string;
+  enum?: string[];
+  enumItemLabels?: string[];
+  enumDescriptions?: string[];
+  group?: string;
+}
+
+export interface LanguageModelConfigurationSchema {
+  type: 'object';
+  properties?: Record<string, LanguageModelConfigurationProperty>;
 }
 
 /**
@@ -129,8 +149,8 @@ export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
   protected buildConfigurationSchema(
     supportedLevels?: string[],
     defaultLevel?: string
-  ): vscode.LanguageModelConfigurationSchema | undefined {
-    const properties: NonNullable<vscode.LanguageModelConfigurationSchema['properties']> = {};
+  ): LanguageModelConfigurationSchema | undefined {
+    const properties: NonNullable<LanguageModelConfigurationSchema['properties']> = {};
 
     // Add reasoning effort config only when the model supports multiple levels
     if (supportedLevels && supportedLevels.length > 0) {

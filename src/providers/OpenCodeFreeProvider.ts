@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { BaseProvider, RoutedModelInfo } from './BaseProvider';
+import { ApiModel } from '../client/types';
 import { ZEN_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
 import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry';

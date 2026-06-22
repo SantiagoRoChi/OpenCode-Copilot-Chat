@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.6.1] - 2026-06-22
+
+### 🐛 Fixed
+
+- **Compilation errors in CI pipeline**: Fixed several TypeScript errors that broke the build
+  - `src/chat/participant.ts`: Fixed `chatContext` → `_chatContext` parameter name, `ChatRequestMarkdownPart` → `ChatResponseMarkdownPart`, added required `toolMode` property, replaced `stream.toolCall()` with `stream.markdown()`
+  - `src/extension.ts`: Fixed type mismatch between `GoLimits` (with `resetsAt`) and `DashboardState.goBurnRate` (expects `spent`/`limit`/`percent`)
+  - `src/providers/BaseProvider.ts`: Defined local `LanguageModelConfigurationSchema` interface to avoid missing VS Code API export
+  - `src/providers/OpenCodeFreeProvider.ts`: Added missing `ApiModel` import
+  - `src/providers/sdk/anthropicChat.ts` & `src/providers/sdk/openaiChat.ts`: Properly typed AI SDK `result.usage` and used null-coalescing for optional `promptTokens`/`completionTokens`; removed duplicate `onUsage` callback call
+
 ## [3.6.0] - 2026-06-22
 
 ### 🚀 Major Feature: OpenCode Usage Tracking & Agent Windows

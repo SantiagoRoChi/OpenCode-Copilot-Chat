@@ -91,15 +91,15 @@ export async function streamAnthropicChat(
 
     // Report usage to VS Code for context counter using LanguageModelDataPart
     try {
-      const usage = await result.usage;
+      const usage = await result.usage as { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
       
-      if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
+      if (usage && (usage.promptTokens ?? 0) > 0) {
         // Report to VS Code for context counter using 'usage' mime type
         // VS Code expects this format: { prompt_tokens, completion_tokens, total_tokens }
         const usageData = {
-          prompt_tokens: usage.promptTokens,
-          completion_tokens: usage.completionTokens,
-          total_tokens: usage.totalTokens || (usage.promptTokens + usage.completionTokens)
+          prompt_tokens: usage.promptTokens ?? 0,
+          completion_tokens: usage.completionTokens ?? 0,
+          total_tokens: usage.totalTokens ?? ((usage.promptTokens ?? 0) + (usage.completionTokens ?? 0))
         };
         
         // Use the static json() method which is part of the public API
@@ -107,7 +107,7 @@ export async function streamAnthropicChat(
         
         // Callback for internal usage tracking
         if (onUsage) {
-          onUsage({ prompt: usage.promptTokens, completion: usage.completionTokens, total: usage.totalTokens });
+          onUsage({ prompt: usage.promptTokens ?? 0, completion: usage.completionTokens ?? 0, total: usage.totalTokens ?? ((usage.promptTokens ?? 0) + (usage.completionTokens ?? 0)) });
         }
       } else {
         // Fallback to estimation if usage not available
@@ -119,9 +119,6 @@ export async function streamAnthropicChat(
     } catch {
       // Fallback to estimation on error
       promptTokens = estimatePromptTokens(messages);
-      if (onUsage) {
-        onUsage({ prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens });
-      }
       if (onUsage) {
         onUsage({ prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens });
       }

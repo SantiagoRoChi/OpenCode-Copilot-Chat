@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/VS%20Code-1.120+-blue.svg" alt="VS Code Version">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-3.6.0-green.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-3.6.1-green.svg" alt="Version">
 </p>
 
 <p align="center">

@@ -41,11 +41,34 @@ export class OpenCodeTreeProvider implements vscode.TreeDataProvider<TreeItem> {
       ));
     }
 
+    // Go burn-rate (if available)
+    if (this.state.goBurnRate) {
+      const go = this.state.goBurnRate;
+      const warn = go.session.percent > 80 || go.weekly.percent > 80 || go.monthly.percent > 80;
+      const icon = warn ? '⚠️' : '🚀';
+      dashChildren.push(new StatNode(
+        `${icon} Go Usage`,
+        `5h: ${go.session.percent}% · Week: ${go.weekly.percent}% · Month: ${go.monthly.percent}%`
+      ));
+      dashChildren.push(new StatNode(
+        `  Session`,
+        `$${go.session.spent.toFixed(2)} / $${go.session.limit}`
+      ));
+      dashChildren.push(new StatNode(
+        `  Weekly`,
+        `$${go.weekly.spent.toFixed(2)} / $${go.weekly.limit}`
+      ));
+      dashChildren.push(new StatNode(
+        `  Monthly`,
+        `$${go.monthly.spent.toFixed(2)} / $${go.monthly.limit}`
+      ));
+    }
+
     // Zen stats
     if (this.state.zenStats?.totalRequests > 0) {
       dashChildren.push(new StatNode(
         `Zen: ${this.state.zenStats.totalRequests} requests`,
-        `${fmtTokens(this.state.zenStats.totalTokens.total)} tokens`
+        `$${this.state.zenStats.totalCost.toFixed(4)} · ${fmtTokens(this.state.zenStats.totalTokens.total)} tokens`
       ));
     }
 
@@ -53,7 +76,7 @@ export class OpenCodeTreeProvider implements vscode.TreeDataProvider<TreeItem> {
     if (this.state.goStats?.totalRequests > 0) {
       dashChildren.push(new StatNode(
         `Go: ${this.state.goStats.totalRequests} requests`,
-        `${fmtTokens(this.state.goStats.totalTokens.total)} tokens`
+        `$${this.state.goStats.totalCost.toFixed(4)} · ${fmtTokens(this.state.goStats.totalTokens.total)} tokens`
       ));
     }
 
@@ -65,6 +88,8 @@ export class OpenCodeTreeProvider implements vscode.TreeDataProvider<TreeItem> {
 
     // ── Config section ──
     const configChildren: TreeItem[] = [
+      new ActionNode('Login with OpenCode', 'opencode-zen.openUsageWebview', 'sign-in'),
+      new ActionNode('Configure Workspace URL', 'opencode-zen.pasteWorkspaceUrl', 'link-external'),
       new ActionNode('Set Zen API Key', 'opencode-zen.configureZen', 'key'),
       new ActionNode('Set Go API Key', 'opencode-zen.configureGo', 'key'),
       new ActionNode('Add Server', 'opencode-zen.addServer', 'server'),

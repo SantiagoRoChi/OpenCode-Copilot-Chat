@@ -18,7 +18,7 @@ export interface ModelCapabilities {
   imageInput: boolean;
   toolCalling: boolean;
   reasoning: boolean;
-  thinkingEffort?: 'low' | 'medium' | 'high';
+  supportedReasoningLevels?: string[];
   pricePerMillionInput?: number;
   pricePerMillionOutput?: number;
   pricePerMillionCacheRead?: number;
@@ -39,7 +39,7 @@ export interface RegistryEntry {
   imageInput: boolean;
   toolCalling: boolean;
   reasoning: boolean;
-  thinkingEffort?: 'low' | 'medium' | 'high';
+  supportedReasoningLevels?: string[];
   pricePerMillionInput?: number;
   pricePerMillionOutput?: number;
   pricePerMillionCacheRead?: number;
@@ -118,16 +118,22 @@ interface ModelsDevProvider {
 
 let liveRegistry: Map<string, RegistryEntry> = new Map();
 let lastFetch = 0;
+let fetchInProgress = false;
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 async function fetchModelsDev(): Promise<void> {
   if (Date.now() - lastFetch < CACHE_TTL && liveRegistry.size > 0) return;
+  if (fetchInProgress) return;
+  fetchInProgress = true;
 
   try {
     const response = await fetch('https://models.dev/api.json', {
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
     });
-    if (!response.ok) return;
+    if (!response.ok) {
+      console.warn(`[modelRegistry] models.dev returned ${response.status}`);
+      return;
+    }
 
     const data = await response.json() as Record<string, ModelsDevProvider>;
     const opencode = data['opencode'];
@@ -150,8 +156,12 @@ async function fetchModelsDev(): Promise<void> {
     }
 
     lastFetch = Date.now();
-  } catch {
+    console.log(`[modelRegistry] Loaded ${liveRegistry.size} models from models.dev`);
+  } catch (err) {
+    console.warn(`[modelRegistry] Failed to fetch models.dev: ${err}`);
     // Fallback to static data on network error
+  } finally {
+    fetchInProgress = false;
   }
 }
 
@@ -171,7 +181,7 @@ function modelsDevToRegistry(id: string, model: ModelsDevModel, provider: 'zen' 
     imageInput: model.attachment ?? hasVision,  // Use attachment OR modalities
     toolCalling: model.tool_call ?? true,
     reasoning: model.reasoning ?? false,
-    thinkingEffort: model.reasoning ? 'high' : undefined,
+    supportedReasoningLevels: model.reasoning ? ['low', 'medium', 'high'] : undefined,
     npmPackage: fmt.apiFormat === 'anthropic' ? '@ai-sdk/anthropic' :
                 fmt.apiFormat === 'google' ? '@ai-sdk/google' :
                 '@ai-sdk/openai',
@@ -188,6 +198,17 @@ export async function initModelRegistry(): Promise<void> {
   await fetchModelsDev();
 }
 
+/** Force a refresh of the model registry, ignoring cache TTL */
+export async function refreshModelRegistry(): Promise<void> {
+  lastFetch = 0;
+  await fetchModelsDev();
+}
+
+/** Check if the model registry has been populated */
+export function isModelRegistryPopulated(): boolean {
+  return liveRegistry.size > 0;
+}
+
 export function getModelEndpoint(provider: Provider, modelId: string): ModelEndpoint {
   const entry = liveRegistry.get(`${provider}:${modelId}`);
   if (entry) {
@@ -199,7 +220,7 @@ export function getModelEndpoint(provider: Provider, modelId: string): ModelEndp
 }
 
 export function getModelCapabilities(modelId: string): ModelCapabilities {
-  // Search all providers for the first matching entry
+  // 1. Exact match
   for (const provider of ['zen', 'go', 'free'] as Provider[]) {
     const entry = liveRegistry.get(`${provider}:${modelId}`);
     if (entry) {
@@ -211,7 +232,7 @@ export function getModelCapabilities(modelId: string): ModelCapabilities {
         imageInput: entry.imageInput,
         toolCalling: entry.toolCalling,
         reasoning: entry.reasoning,
-        thinkingEffort: entry.thinkingEffort,
+        supportedReasoningLevels: entry.supportedReasoningLevels,
         pricePerMillionInput: entry.pricePerMillionInput,
         pricePerMillionOutput: entry.pricePerMillionOutput,
         pricePerMillionCacheRead: entry.pricePerMillionCacheRead,
@@ -219,12 +240,33 @@ export function getModelCapabilities(modelId: string): ModelCapabilities {
     }
   }
 
-  // Try partial match (e.g., "opencode/deepseek-v4-flash" → "deepseek-v4-flash")
+  // 2. Try partial match: strip vendor prefix (e.g. "opencode/deepseek-v4-flash" → "deepseek-v4-flash")
   const slashIndex = modelId.lastIndexOf('/');
   if (slashIndex >= 0) {
     const shortId = modelId.slice(slashIndex + 1);
     const result = getModelCapabilities(shortId);
     if (result.name !== shortId) return result;
+  }
+
+  // 3. Try fuzzy match: find any registry entry whose ID contains the modelId
+  for (const provider of ['zen', 'go', 'free'] as Provider[]) {
+    for (const [key, entry] of liveRegistry) {
+      if (key.startsWith(`${provider}:`) && key.includes(modelId)) {
+        return {
+          name: entry.name,
+          family: entry.family,
+          maxInputTokens: entry.maxInputTokens,
+          maxOutputTokens: entry.maxOutputTokens,
+          imageInput: entry.imageInput,
+          toolCalling: entry.toolCalling,
+          reasoning: entry.reasoning,
+          supportedReasoningLevels: entry.supportedReasoningLevels,
+          pricePerMillionInput: entry.pricePerMillionInput,
+          pricePerMillionOutput: entry.pricePerMillionOutput,
+          pricePerMillionCacheRead: entry.pricePerMillionCacheRead,
+        };
+      }
+    }
   }
 
   // Fallback for unknown models

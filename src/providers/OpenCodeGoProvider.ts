@@ -6,7 +6,17 @@ import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry'
 import { streamAnthropicChat, TokenUsage as AnthropicTokenUsage } from './sdk/anthropicChat';
 import { streamOpenAIChat, TokenUsage as OpenAITokenUsage } from './sdk/openaiChat';
 
-interface ApiModel { id: string; }
+interface ApiModel {
+  id: string;
+  name?: string;
+  maxTokens?: number;
+  contextWindow?: number;
+  capabilities?: {
+    toolCalling?: boolean;
+    imageInput?: boolean;
+    reasoning?: boolean;
+  };
+}
 
 export class OpenCodeGoProvider extends BaseProvider {
   private apiKey = '';
@@ -56,7 +66,9 @@ export class OpenCodeGoProvider extends BaseProvider {
     }
 
     const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
-    const modelOpts = options.modelOptions ?? {};
+    
+    // Extract model options including user configuration from the UI
+    const modelOpts = this.extractModelOptions(options);
 
     if (rm._apiFormat === 'anthropic') {
       await streamAnthropicChat(
@@ -121,18 +133,11 @@ export class OpenCodeGoProvider extends BaseProvider {
         currency: 'USD',
       } : undefined,
     };
-    if (caps.reasoning) {
-      (info as any).configurationSchema = {
-        properties: {
-          reasoningEffort: {
-            type: 'string', enum: ['low', 'medium', 'high'],
-            default: caps.thinkingEffort ?? 'medium',
-            description: 'Reasoning depth.',
-            enumItemLabels: ['Low', 'Medium', 'High'],
-          },
-        },
-      };
-    }
+    // Build configuration schema based on model capabilities
+    info.configurationSchema = this.buildConfigurationSchema(
+      caps.supportedReasoningLevels
+    );
+
     return info;
   }
 

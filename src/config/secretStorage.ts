@@ -125,4 +125,33 @@ export class SecretStorage {
   async setLocalServerConfigs(configs: LocalServerConfig[]): Promise<void> {
     await this.state.update(LOCAL_SERVER_CONFIGS_KEY, JSON.stringify(configs));
   }
+
+  // ── Generic secret storage methods ────────────────────────────────────────
+
+  /**
+   * Store a secret value by key.
+   */
+  async setSecret(key: string, value: string): Promise<void> {
+    if (value.trim().length === 0) {
+      await this.secrets.delete(key);
+    } else {
+      await this.secrets.store(key, value.trim());
+    }
+  }
+
+  /**
+   * Get a secret value by key.
+   * Returns null if not found.
+   */
+  async getSecret(key: string): Promise<string | null> {
+    const value = await this.secrets.get(key);
+    return value ?? null;
+  }
+
+  /**
+   * Delete a secret by key.
+   */
+  async deleteSecret(key: string): Promise<void> {
+    await this.secrets.delete(key);
+  }
 }

@@ -18,16 +18,33 @@ export interface DashboardState {
   goKey: string;
   zenFamilies: Array<{ name: string; count: number; models: string[] }>;
   goFamilies: Array<{ name: string; count: number; models: string[] }>;
-  zenStats: { totalRequests: number; totalTokens: { total: number } };
-  goStats: { totalRequests: number; totalTokens: { total: number } };
+  zenStats: { totalRequests: number; totalTokens: { total: number }; totalCost: number };
+  goStats: { totalRequests: number; totalTokens: { total: number }; totalCost: number };
+  /** Go subscription burn-rate */
+  goBurnRate?: {
+    session: { spent: number; limit: number; percent: number };
+    weekly: { spent: number; limit: number; percent: number };
+    monthly: { spent: number; limit: number; percent: number };
+  };
 }
 
 export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'opencode-zen-dashboard';
   private view?: vscode.WebviewView;
-  private state?: DashboardState;
+  private state: DashboardState;
 
-  constructor(private readonly extensionUri: vscode.Uri) {}
+  constructor(private readonly extensionUri: vscode.Uri) {
+    // Initialize with empty state so webview shows something immediately
+    this.state = {
+      servers: [],
+      zenKey: '',
+      goKey: '',
+      zenFamilies: [],
+      goFamilies: [],
+      zenStats: { totalRequests: 0, totalTokens: { total: 0 }, totalCost: 0 },
+      goStats: { totalRequests: 0, totalTokens: { total: 0 }, totalCost: 0 },
+    };
+  }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
@@ -36,6 +53,8 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extensionUri],
     };
     webviewView.webview.html = this.getHtml();
+
+    // Send initial state immediately
     this.sendState();
 
     // Handle button clicks from the webview
@@ -49,18 +68,33 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
           break;
       }
     });
+
+    // Handle visibility changes - re-send state when becoming visible
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this.sendState();
+      }
+    });
   }
 
   update(state: DashboardState): void {
     this.state = state;
-    if (this.view) {
-      this.view.webview.postMessage({ type: 'update', data: state });
-    }
+    this.sendState();
   }
 
   private sendState(): void {
-    if (this.view && this.state) {
+    if (this.view) {
       this.view.webview.postMessage({ type: 'update', data: this.state });
+    }
+  }
+
+  /** Focus the dashboard view */
+  focus(): void {
+    if (this.view) {
+      this.view.show(true);
+    } else {
+      // If view not ready, try to open it via command
+      vscode.commands.executeCommand('opencode-zen-dashboard.focus');
     }
   }
 
@@ -248,6 +282,9 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
       });
     });
 
+    // Initial render with empty state
+    console.log('[Webview] Initializing...');
+
     function renderServers(d) {
       const el = document.getElementById('servers');
       if (!d.servers || d.servers.length === 0) {
@@ -278,10 +315,18 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
       const el = document.getElementById('keys');
       el.innerHTML = ''
         + '<div class="key-row"><div><div class="key-label">OpenCode Zen</div><div class="key-value">' + maskKey(d.zenKey) + '</div></div>'
-        + '<button class="btn" onclick="vscode.postMessage({command:\'configureZen\'})">Configure</button></div>'
+        + '<button class="btn" id="btn-configure-zen">Configure</button></div>'
         + '<div class="key-row"><div><div class="key-label">OpenCode Go</div><div class="key-value">' + maskKey(d.goKey) + '</div></div>'
-        + '<button class="btn" onclick="vscode.postMessage({command:\'configureGo\'})">Configure</button></div>'
+        + '<button class="btn" id="btn-configure-go">Configure</button></div>'
         + '<div class="key-row"><div><div class="key-label">OpenCode Free</div><div class="key-value">' + (d.zenKey ? 'Uses Zen key' : 'Requires Zen key') + '</div></div></div>';
+
+      // Attach event listeners after rendering
+      document.getElementById('btn-configure-zen')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'configureZen' });
+      });
+      document.getElementById('btn-configure-go')?.addEventListener('click', () => {
+        vscode.postMessage({ command: 'configureGo' });
+      });
     }
 
     function renderModels(d) {
@@ -319,7 +364,10 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
         });
       }
 
-      if (!h) h = '<div class="empty">No models available.<br>Configure API keys or add servers.</div>';
+      // Always show Zen and Go model families even if empty
+      if (!d.zenFamilies?.length && !d.goFamilies?.length && !srvs.length) {
+        h += '<div class="empty">No models available.<br>Configure API keys or add servers.</div>';
+      }
       el.innerHTML = h;
     }
 
@@ -336,23 +384,19 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
         h += '</div>';
       }
 
-      if (d.zenStats?.totalRequests > 0 || d.goStats?.totalRequests > 0) {
-        h += '<div class="section-header" style="margin-top:12px">API Usage</div><div class="stats-grid">';
-        if (d.zenStats?.totalRequests > 0) {
-          h += '<div class="stat-card"><div class="stat-value">' + fmt(d.zenStats.totalTokens.total) + '</div><div class="stat-label">Zen Tokens</div></div>';
-        }
-        if (d.goStats?.totalRequests > 0) {
-          h += '<div class="stat-card"><div class="stat-value">' + fmt(d.goStats.totalTokens.total) + '</div><div class="stat-label">Go Tokens</div></div>';
-        }
-        h += '</div>';
-      }
-
-      if (!h) h = '<div class="empty">No usage data yet.</div>';
+      // Always show API Usage stats (even if 0)
+      h += '<div class="section-header" style="margin-top:12px">API Usage</div><div class="stats-grid">';
+      h += '<div class="stat-card"><div class="stat-value">' + (d.zenStats?.totalRequests || 0) + '</div><div class="stat-label">Zen Requests</div></div>';
+      h += '<div class="stat-card"><div class="stat-value">' + fmt(d.zenStats?.totalTokens?.total || 0) + '</div><div class="stat-label">Zen Tokens</div></div>';
+      h += '<div class="stat-card"><div class="stat-value">' + (d.goStats?.totalRequests || 0) + '</div><div class="stat-label">Go Requests</div></div>';
+      h += '<div class="stat-card"><div class="stat-value">' + fmt(d.goStats?.totalTokens?.total || 0) + '</div><div class="stat-label">Go Tokens</div></div>';
+      h += '</div>';
       el.innerHTML = h;
     }
 
     window.addEventListener('message', e => {
       const msg = e.data;
+      console.log('[Webview] Received message:', msg.type, msg.data);
       if (msg.type === 'update' && msg.data) {
         renderServers(msg.data);
         renderKeys(msg.data);

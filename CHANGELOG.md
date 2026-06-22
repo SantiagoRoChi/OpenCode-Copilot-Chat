@@ -1,47 +1,76 @@
 # Changelog
 
-## [Unreleased] - 2026-06-19
+## [3.6.0] - 2026-06-22
 
-### 🏗️ Architecture Refactor: AI SDK v6 Migration
-
-**Major refactor of the provider architecture to use official AI SDK packages (`@ai-sdk/openai`, `@ai-sdk/anthropic`).**
-
-#### Changed
-- **BREAKING**: `OpenAICompatibleProvider` renamed to `BaseProvider` (reflects multi-provider support: OpenAI, Anthropic, and compatible)
-- **BREAKING**: Removed custom HTTP streaming implementation in favor of official AI SDK
-  - `streamOpenAIChat()` now uses `@ai-sdk/openai` with `streamText()`
-  - `streamAnthropicChat()` now uses `@ai-sdk/anthropic` with `streamText()`
-  - Both handlers use shared utilities in `src/providers/sdk/utils.ts`
-
-#### Removed
-- **Dead code elimination (~1000 lines)**:
-  - `src/providers/sdk/compatChat.ts` - replaced by SDK-based handlers
-  - `src/tools/toolCallAdapter.ts` - replaced by AI SDK's native tool handling
-  - `src/client/opencodeClient.ts` - unused HTTP client
-  - Duplicate message conversion logic in both SDK handlers
-- **Compiled artifacts**: Removed all `.js` and `.js.map` files from `src/` (build output now only in `out/`)
+### 🚀 Major Feature: OpenCode Usage Tracking & Agent Windows
 
 #### Added
-- `src/providers/sdk/utils.ts` - Shared utilities:
-  - `convertMessages()` - VS Code to AI SDK message format conversion
-  - `mapModelOptions()` - Temperature/topP/maxTokens mapping
-  - `trackToolNames()` - Tool name tracking by callId
-- `.gitignore` rules for `src/**/*.js` and `src/**/*.js.map`
+- **OpenCode Usage Tracking Integration**: Real-time usage data from OpenCode API
+  - Fetches usage data via OpenCode's _server endpoint with dynamic server ID discovery
+  - Automatically discovers workspace ID from OpenCode pages
+  - Uses API key from uth.json for authentication (no manual cookie required)
+  - Displays usage metrics: requests, tokens, cost per model
+  - Go subscription burn-rate tracking (5h rolling, weekly, monthly)
+
+- **Agent Window Support**: Register providers for VS Code Agents Window
+  - Creates duplicate provider instances with -agent suffix vendors
+  - Enables OpenCode models in Copilot CLI / Agents Window
+  - Configurable via opencode-zen.enableAgentWindow setting
+
+- **OpenCode Usage Panel**: New webview panel for OpenCode login
+  - Simple Browser integration for OAuth login flow
+  - Local HTTP server for capturing workspace ID and auth cookie
+  - Automatic workspace discovery from OpenCode pages
+
+- **OpenCode Auth Service**: Centralized authentication management
+  - Stores workspace ID, auth cookie, and API keys
+  - Auto-discovers workspace ID from OpenCode pages
+  - Extracts server ID dynamically from page HTML
+
+- **Enhanced Status Bar**: Real-time usage metrics
+  - Go subscription burn-rate display (5h/weekly/monthly)
+  - Warning indicators when approaching limits
+  - Cost tracking per provider
+
+- **Enhanced Tree View**: Registration commands in sidebar
+  - Login with OpenCode button
+  - Configure Workspace URL button
+  - Direct access to all configuration options
+
+- **OpenCode Usage Service**: Background usage data fetching
+  - Periodic refresh every 5 minutes
+  - Dynamic server ID discovery from page HTML
+  - Automatic workspace ID extraction
+
+#### Changed
+- **UsageTracker enhanced with cost calculation**
+  - Added ModelPricing interface for token pricing
+  - Added stimateCost() function for request cost calculation
+  - Added PeriodUsage for burn-rate tracking
+  - Added GO_LIMITS constant for subscription limits
+
+- **Status bar improved**
+  - Shows Go burn-rate with warning indicators
+  - Displays cost per request
+  - Enhanced tooltip with detailed breakdown
+
+- **Tree view improved**
+  - Added registration commands (Login, Configure Workspace)
+  - Shows burn-rate data in dashboard
 
 #### Fixed
-- **Tool schema format**: Now uses `jsonSchema()` wrapper from `@ai-sdk/provider-utils` instead of raw JSON
-- **Tool call property**: Changed from `args` to `input` (AI SDK v6 standard)
-- **Reasoning blocks**: Changed from `thinkingText` to `reasoningText` (AI SDK v6 standard)
-- **Auth header caching**: Fixed by passing API key directly to SDK on every call (no stale cache)
+- **OpenCode API key handling**
+  - Fixed stale API key caching issue
+  - Now passes API key directly to SDK on every call
+  - No more "Missing API key" errors
 
-#### Files Changed
-- Renamed: `src/providers/OpenAICompatibleProvider.ts` → `src/providers/BaseProvider.ts`
-- Updated: All 6 provider imports to use new `BaseProvider` name
-- All providers (LM Studio, Ollama, OpenCode Server) now use `streamOpenAIChat()`
+- **Server ID discovery**
+  - Dynamic discovery from page HTML instead of hardcoded values
+  - Handles OpenCode deployments that change server IDs
 
 ---
 
-## [3.5.0] - 2026-06-17
+## [3.5.0] - 2026-06-17 - 2026-06-17
 
 ### Fixed
 - **Tool calling broken on LM Studio and Ollama**: Local models emit tool calls as inline `<tool_call>{...}</tool_call>` blocks inside `delta.content` instead of native `delta.tool_calls`. The SSE parser now runs every text chunk through a new `ToolCallAdapter` (`src/tools/toolCallAdapter.ts`) that detects these XML-style blocks, generates a stable `callId`, and emits a `LanguageModelToolCallPart`. Native `delta.tool_calls` is still honored (OpenCode / Zen / Go unchanged).
@@ -323,3 +352,6 @@
 - Status bar indicator with connection state
 - Settings: timeout, tool calling, image input, temperature, verbose logging
 - Model catalog from builtin metadata, models.dev, and Zen API
+
+
+

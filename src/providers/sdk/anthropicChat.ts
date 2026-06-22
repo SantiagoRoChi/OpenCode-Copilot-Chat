@@ -89,10 +89,42 @@ export async function streamAnthropicChat(
       if (ThinkingPart) progress.report(new ThinkingPart(reasoningText));
     }
 
-    // Report usage
-    promptTokens = estimatePromptTokens(messages);
-    if (onUsage) {
-      onUsage({ prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens });
+    // Report usage to VS Code for context counter using LanguageModelDataPart
+    try {
+      const usage = await result.usage;
+      
+      if (usage && (usage.promptTokens > 0 || usage.completionTokens > 0)) {
+        // Report to VS Code for context counter using 'usage' mime type
+        // VS Code expects this format: { prompt_tokens, completion_tokens, total_tokens }
+        const usageData = {
+          prompt_tokens: usage.promptTokens,
+          completion_tokens: usage.completionTokens,
+          total_tokens: usage.totalTokens || (usage.promptTokens + usage.completionTokens)
+        };
+        
+        // Use the static json() method which is part of the public API
+        progress.report(vscode.LanguageModelDataPart.json(usageData, 'usage'));
+        
+        // Callback for internal usage tracking
+        if (onUsage) {
+          onUsage({ prompt: usage.promptTokens, completion: usage.completionTokens, total: usage.totalTokens });
+        }
+      } else {
+        // Fallback to estimation if usage not available
+        promptTokens = estimatePromptTokens(messages);
+        if (onUsage) {
+          onUsage({ prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens });
+        }
+      }
+    } catch {
+      // Fallback to estimation on error
+      promptTokens = estimatePromptTokens(messages);
+      if (onUsage) {
+        onUsage({ prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens });
+      }
+      if (onUsage) {
+        onUsage({ prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens });
+      }
     }
   } catch (err: any) {
     throw new Error(`Anthropic stream error: ${err.message ?? err}`);

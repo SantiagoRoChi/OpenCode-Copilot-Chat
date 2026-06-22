@@ -2,7 +2,7 @@
   "name": "plus-providers-copilot-chat",
   "displayName": "+ Providers on Copilot Chat",
   "description": "Connect LM Studio, Ollama, and OpenCode servers to GitHub Copilot Chat — local and remote AI models",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -15,6 +15,7 @@
   },
   "enabledApiProposals": [
     "chatProvider",
+    "chatParticipant",
     "languageModelThinkingPart",
     "chatInputNotification",
     "chatStatusItem",
@@ -43,7 +44,8 @@
     "tools"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onChatParticipant:opencode.chat"
   ],
   "main": "./out/extension.js",
   "scripts": {
@@ -141,22 +143,26 @@
       {
         "name": "opencode_subagent",
         "displayName": "OpenCode Subagent",
-        "modelDescription": "Execute a subagent task using an OpenCode provider. Delegates to the first available OpenCode provider (Free, Go, Zen, or Server).",
+        "modelDescription": "Run a task within an isolated subagent context using OpenCode providers. Supports model selection — the model parameter accepts a model name and searches across all registered OpenCode/LMStudio/Ollama providers. Use this to delegate subtasks to cheaper or faster models, or to isolate context.",
         "toolReferenceName": "opencode_subagent",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": {
+            "prompt": {
               "type": "string",
-              "description": "What to execute — can include commands or task descriptions"
+              "description": "A detailed description of the task for the agent to perform"
             },
             "description": {
               "type": "string",
-              "description": "User-visible description shown while the tool runs"
+              "description": "A short (3-5 word) description of the task"
+            },
+            "model": {
+              "type": "string",
+              "description": "Optional model for the subagent. Format: \"Model Name (Vendor)\". Searches across all registered providers. If not provided, uses the first available model."
             }
           },
           "required": [
-            "query",
+            "prompt",
             "description"
           ]
         }
@@ -202,6 +208,24 @@
         "command": "opencode-zen.refreshGlobal",
         "title": "Refresh Global Usage",
         "category": "OpenCode Zen"
+      },
+      {
+        "command": "opencode-zen.openUsageWebview",
+        "title": "Login with OpenCode",
+        "category": "OpenCode Zen",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "opencode-zen.openDashboard",
+        "title": "Open Usage Dashboard",
+        "category": "OpenCode Zen",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "opencode-zen.pasteWorkspaceUrl",
+        "title": "Configure Workspace URL",
+        "category": "OpenCode Zen",
+        "icon": "$(link-external)"
       },
       {
         "command": "opencode-zen.addServer",
@@ -290,6 +314,11 @@
           "type": "boolean",
           "default": true,
           "description": "Auto-detect OpenCode installation and use its API key"
+        },
+        "opencode-zen.enableAgentWindow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Register providers for the VS Code Agents Window (Copilot CLI). Shows OpenCode models in the Agents Window model picker."
         }
       }
     },

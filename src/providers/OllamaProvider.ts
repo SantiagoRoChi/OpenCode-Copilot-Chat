@@ -115,7 +115,7 @@ export class OllamaProvider extends BaseProvider {
       rm.maxOutputTokens,
       messages,
       tools,
-      options.modelOptions ?? {},
+      this.extractModelOptions(options),
       progress,
       token,
     );
@@ -177,8 +177,9 @@ export class OllamaProvider extends BaseProvider {
     const maxOutput = Math.min(contextWindow < 4096 ? Math.floor(contextWindow / 2) : 4096, contextWindow);
     const maxInput = contextWindow - maxOutput;
     const displayName = modelId.split(':')[0];
+    const supportsReasoning = caps.includes('reasoning') || caps.includes('thinking');
 
-    return {
+    const info: RoutedModelInfo = {
       id: `${serverId}:${modelId}`,
       name: `${displayName} (${entry.name})`,
       family: arch || displayName,
@@ -194,6 +195,12 @@ export class OllamaProvider extends BaseProvider {
       _apiId: modelId,
       _apiFormat: 'openai-compatible',
     };
+
+    if (supportsReasoning) {
+      info.configurationSchema = this.buildConfigurationSchema(['low', 'medium', 'high']);
+    }
+
+    return info;
   }
 
   override dispose(): void {

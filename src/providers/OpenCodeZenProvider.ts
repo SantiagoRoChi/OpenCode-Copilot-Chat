@@ -3,10 +3,9 @@ import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { ZEN_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
 import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry';
+import { ApiModel } from '../client/types';
 import { streamAnthropicChat, TokenUsage as AnthropicTokenUsage } from './sdk/anthropicChat';
 import { streamOpenAIChat, TokenUsage as OpenAITokenUsage } from './sdk/openaiChat';
-
-interface ApiModel { id: string; }
 
 export class OpenCodeZenProvider extends BaseProvider {
   protected apiKey = '';
@@ -70,7 +69,9 @@ export class OpenCodeZenProvider extends BaseProvider {
     }
 
     const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
-    const modelOpts = options.modelOptions ?? {};
+    
+    // Extract model options including user configuration from the UI
+    const modelOpts = this.extractModelOptions(options);
 
     const handleUsage = (usage: AnthropicTokenUsage | OpenAITokenUsage) => {
       if (this.onUsageCallback) {
@@ -137,19 +138,11 @@ export class OpenCodeZenProvider extends BaseProvider {
       _apiId: id,
       _apiFormat: ep.apiFormat === 'google' ? 'openai-compatible' : ep.apiFormat,
     };
-    if (caps.reasoning) {
-      (info as any).configurationSchema = {
-        properties: {
-          reasoningEffort: {
-            type: 'string',
-            enum: ['low', 'medium', 'high'],
-            default: caps.thinkingEffort ?? 'medium',
-            description: 'Reasoning depth. Higher = more thorough but slower.',
-            enumItemLabels: ['Low', 'Medium', 'High'],
-          },
-        },
-      };
-    }
+    // Build configuration schema based on model capabilities
+    info.configurationSchema = this.buildConfigurationSchema(
+      caps.supportedReasoningLevels
+    );
+
     return info;
   }
 

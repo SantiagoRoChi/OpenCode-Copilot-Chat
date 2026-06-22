@@ -11,7 +11,11 @@ import { SecretStorage } from './config/secretStorage';
 import { MultiServerManager, initMultiServerManager } from './client/multiServerManager';
 import { OpenCodeTreeProvider } from './treeview/openCodeTreeProvider';
 import { OpenCodeSubagentTool } from './tools/subagentTool';
+import { registerOpenCodeChatParticipant, ProviderEntry } from './chat/participant';
 import { DashboardState, OpenCodeWebviewProvider } from './webview/openCodeWebviewProvider';
+import { OpenCodeUsagePanel } from './webview/openCodeUsagePanel';
+import { OpenCodeUsageService } from './integration/openCodeUsageService';
+import { OpenCodeAuthService } from './integration/openCodeAuthService';
 import { initModelRegistry } from './client/modelRegistry';
 import { getChatStatusManager, disposeChatStatusManager } from './status/chatStatusItems';
 import { showMissingConfigNotification, showConnectedNotification, showConnectionErrorNotification } from './notifications/chatNotifications';
@@ -34,8 +38,13 @@ let serverManager: MultiServerManager;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   console.log('+ Providers: activating...');
+
+  // ── Initialize services ─────────────────────────────────────────────────
+  OpenCodeAuthService.init(context);
+
   // Fetch model capabilities (context sizes, vision, reasoning) from models.dev
-  void initModelRegistry();
+  // Must complete before providers try to resolve model capabilities
+  await initModelRegistry();
   // ── Providers ────────────────────────────────────────────────────────────
 
   freeProvider = new OpenCodeFreeProvider(context);
@@ -47,6 +56,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     goProvider.loadApiKey(),
     zenProvider.loadApiKey(),
   ]);
+
+  // Trigger initial model fetch after loading API keys
+  // This will update the status bar and tree view with real data
+  setTimeout(() => {
+    // Force providers to fetch models if they have API keys
+    if (zenProvider.getApiKey()) {
+      zenProvider.refreshModels();
+    }
+    if (goProvider.getApiKey()) {
+      goProvider.refreshModels();
+    }
+    if (freeProvider.getApiKey()) {
+      freeProvider.refreshModels();
+    }
+    // Refresh the UI
+    void refreshTreeView();
+  }, 1000);
 
   // ── OpenCode local key auto-detection ─────────────────────────────────────
 
@@ -148,6 +174,44 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     freeProvider, goProvider, zenProvider, serverProvider, lmStudioProvider, ollamaProvider,
   );
 
+  // ── Agent Window providers (for Copilot CLI / Agents Window) ──────────────
+  // Register additional providers with '-agent' suffix for the Agents Window.
+  // VS Code shows these in the Agents Window model picker.
+  const enableAgentWindow = vscode.workspace.getConfiguration('opencode-zen').get<boolean>('enableAgentWindow', true);
+  
+  if (enableAgentWindow) {
+    const agentZenProvider = new OpenCodeZenProvider(context);
+    const agentGoProvider = new OpenCodeGoProvider(context);
+    const agentFreeProvider = new OpenCodeFreeProvider(context);
+    
+    // Copy API keys from main providers
+    await agentZenProvider.setApiKey(zenProvider.getApiKey());
+    await agentGoProvider.setApiKey(goProvider.getApiKey());
+    await agentFreeProvider.setApiKey(freeProvider.getApiKey());
+    
+    context.subscriptions.push(
+      vscode.lm.registerLanguageModelChatProvider('opencode-zen-agent',    agentZenProvider),
+      vscode.lm.registerLanguageModelChatProvider('opencode-go-agent',     agentGoProvider),
+      vscode.lm.registerLanguageModelChatProvider('opencode-free-agent',   agentFreeProvider),
+      agentZenProvider, agentGoProvider, agentFreeProvider,
+    );
+    
+    // Sync API keys when main providers change
+    context.subscriptions.push(
+      zenProvider.onDidChangeLanguageModelChatInformation(() => {
+        void agentZenProvider.setApiKey(zenProvider.getApiKey());
+      }),
+      goProvider.onDidChangeLanguageModelChatInformation(() => {
+        void agentGoProvider.setApiKey(goProvider.getApiKey());
+      }),
+      freeProvider.onDidChangeLanguageModelChatInformation(() => {
+        void agentFreeProvider.setApiKey(freeProvider.getApiKey());
+      }),
+    );
+    
+    console.log('[OpenCode] Agent Window providers registered (opencode-*-agent)');
+  }
+
   // ── Subagent tool ─────────────────────────────────────────────────────────
 
   const subagentTool = new OpenCodeSubagentTool();
@@ -155,6 +219,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   OpenCodeSubagentTool.registerProvider('opencode-go',   goProvider);
   OpenCodeSubagentTool.registerProvider('opencode-zen',  zenProvider);
   context.subscriptions.push(vscode.lm.registerTool(OpenCodeSubagentTool.toolName, subagentTool));
+
+  // ── Chat participant (@opencode) ──────────────────────────────────────────
+  const chatParticipant = registerOpenCodeChatParticipant(context, [
+    { vendor: 'opencode-zen', displayName: 'OpenCode Zen', provider: zenProvider },
+    { vendor: 'opencode-go', displayName: 'OpenCode Go', provider: goProvider },
+    { vendor: 'opencode-free', displayName: 'OpenCode Free', provider: freeProvider },
+    { vendor: 'lmstudio', displayName: 'LM Studio', provider: lmStudioProvider },
+    { vendor: 'ollama-plus', displayName: 'Ollama+', provider: ollamaProvider },
+  ]);
+  context.subscriptions.push(chatParticipant);
 
   // ── Chat status items (proposed API) ─────────────────────────────────────
 
@@ -183,24 +257,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   context.subscriptions.push(usageTracker);
 
+  // ── OpenCode API Usage Service ───────────────────────────────────────────
+  // Connect OpenCode API usage data to the UI
+  const openCodeUsageService = OpenCodeUsageService.getInstance();
+  openCodeUsageService.onDidChangeUsage(data => {
+    console.log(`[OpenCode] Usage data received: ${data.models.length} models, $${data.totalCost}`);
+    void refreshTreeView();
+  });
+  context.subscriptions.push(openCodeUsageService);
+
+  // Generate a consistent session ID for this extension activation
+  const sessionId = randomUUID();
+  let requestCounter = 0;
+
   // Connect provider usage callbacks
   freeProvider.setOnUsageCallback(usage => {
+    requestCounter++;
     usageTracker.recordRequest(
-      randomUUID(),                    // requestId
-      randomUUID(),                    // sessionId
-      'free-model',                    // modelId
-      'Free Model',                    // modelName
-      'opencode-free',                 // provider
+      `req-${sessionId}-${requestCounter}`,  // requestId
+      sessionId,                              // sessionId
+      'free-model',                           // modelId
+      'Free Model',                           // modelName
+      'opencode-free',                        // provider
       { prompt: usage.prompt, completion: usage.completion, total: usage.total },
-      undefined,                       // duration
-      undefined                        // meta
+      undefined,                              // duration
+      undefined                               // meta
     );
   });
 
   goProvider.setOnUsageCallback(usage => {
+    requestCounter++;
     usageTracker.recordRequest(
-      randomUUID(),
-      randomUUID(),
+      `req-${sessionId}-${requestCounter}`,
+      sessionId,
       'go-model',
       'Go Model',
       'opencode-go',
@@ -211,9 +300,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   zenProvider.setOnUsageCallback(usage => {
+    requestCounter++;
     usageTracker.recordRequest(
-      randomUUID(),
-      randomUUID(),
+      `req-${sessionId}-${requestCounter}`,
+      sessionId,
       'zen-model',
       'Zen Model',
       'opencode-zen',
@@ -222,6 +312,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       undefined
     );
   });
+
+  // Refresh dashboard when models change - also update status bar
+  const handleModelsChanged = () => {
+    void refreshTreeView();
+    // Update status bar with current model counts
+    const zenCount = zenProvider.getCurrentModels().length;
+    const goCount = goProvider.getCurrentModels().length;
+    const freeCount = freeProvider.getCurrentModels().length;
+    const totalModels = zenCount + goCount + freeCount;
+    if (totalModels > 0) {
+      statusBar.setIdle(totalModels);
+    }
+  };
+
+  context.subscriptions.push(
+    freeProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
+    goProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
+    zenProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
+    serverProvider.onDidChangeLanguageModelChatInformation(() => void refreshTreeView()),
+    lmStudioProvider.onDidChangeLanguageModelChatInformation(() => void refreshTreeView()),
+    ollamaProvider.onDidChangeLanguageModelChatInformation(() => void refreshTreeView()),
+  );
 
   treeProvider = new OpenCodeTreeProvider();
   context.subscriptions.push(
@@ -242,7 +354,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.showInformationMessage(`+ Providers: ${connectedCount} OpenCode server(s) connected.`);
   }
 
-  void refreshTreeView();
+  // Initial refresh with delay to allow providers to load
+  console.log('[OpenCode] Starting initial refresh...');
+  setTimeout(() => {
+    console.log('[OpenCode] Refreshing tree view...');
+    void refreshTreeView();
+  }, 1000);
+  setTimeout(() => void refreshTreeView(), 3000);
+  setTimeout(() => void refreshTreeView(), 6000);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -254,6 +373,7 @@ function syncServerProviderFromManager(): void {
 }
 
 async function refreshTreeView(): Promise<void> {
+  console.log('[OpenCode] refreshTreeView called');
   const allServers: DashboardState['servers'] = [];
 
   for (const conn of serverManager.getConnectedList()) {
@@ -285,31 +405,49 @@ async function refreshTreeView(): Promise<void> {
   // Get model families from Zen and Go providers
   const zenModels = zenProvider.getCurrentModels();
   const goModels = goProvider.getCurrentModels();
+  console.log(`[OpenCode] Zen models: ${zenModels.length}, Go models: ${goModels.length}`);
 
   // Build family groups
   const zenFamilies = buildModelFamilies(zenModels);
   const goFamilies = buildModelFamilies(goModels);
+  console.log(`[OpenCode] Zen families: ${zenFamilies.length}, Go families: ${goFamilies.length}`);
 
-  // Get usage stats
+  // Get internal usage stats
   const usageStats = usageTracker.getStats();
+
+  // Get OpenCode API usage data
+  const openCodeUsage = OpenCodeUsageService.getInstance().getUsageData();
 
   // Calculate Zen stats (opencode-free, opencode-zen)
   let zenTotalTokens = 0;
   let zenTotalRequests = 0;
+  let zenTotalCost = 0;
   for (const [provider, data] of Object.entries(usageStats.byProvider)) {
     if (provider === 'opencode-free' || provider === 'opencode-zen') {
       zenTotalTokens += data.tokens.total;
       zenTotalRequests += data.requests;
+      zenTotalCost += data.cost;
     }
   }
 
   // Calculate Go stats
   let goTotalTokens = 0;
   let goTotalRequests = 0;
+  let goTotalCost = 0;
   for (const [provider, data] of Object.entries(usageStats.byProvider)) {
     if (provider === 'opencode-go') {
       goTotalTokens += data.tokens.total;
       goTotalRequests += data.requests;
+      goTotalCost += data.cost;
+    }
+  }
+
+  // If we have OpenCode API data, use it to enrich the stats
+  if (openCodeUsage) {
+    // Merge OpenCode API model data with our internal tracking
+    for (const model of openCodeUsage.models) {
+      goTotalCost += model.cost;
+      goTotalTokens += model.inputTokens + model.outputTokens;
     }
   }
 
@@ -319,12 +457,22 @@ async function refreshTreeView(): Promise<void> {
     goKey: goProvider.getApiKey() ? '***' : '',
     zenFamilies,
     goFamilies,
-    zenStats: { totalRequests: zenTotalRequests, totalTokens: { total: zenTotalTokens } },
-    goStats: { totalRequests: goTotalRequests, totalTokens: { total: goTotalTokens } },
+    zenStats: { totalRequests: zenTotalRequests, totalTokens: { total: zenTotalTokens }, totalCost: zenTotalCost },
+    goStats: { totalRequests: goTotalRequests, totalTokens: { total: goTotalTokens }, totalCost: goTotalCost },
+    goBurnRate: openCodeUsage?.goLimits ? {
+      session: openCodeUsage.goLimits.rolling,
+      weekly: openCodeUsage.goLimits.weekly,
+      monthly: openCodeUsage.goLimits.monthly,
+    } : usageStats.goUsage ? {
+      session: usageStats.goUsage.session,
+      weekly: usageStats.goUsage.weekly,
+      monthly: usageStats.goUsage.monthly,
+    } : undefined,
   };
 
   treeProvider.refresh(state);
   webviewProvider?.update(state);
+  console.log('[OpenCode] Dashboard updated');
 }
 
 function buildModelFamilies(models: { id: string; name: string; family: string }[]): Array<{ name: string; count: number; models: string[] }> {
@@ -623,11 +771,45 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
   // ── Show usage stats ──────────────────────────────────────────────────────
   reg('opencode-zen.showUsage', () => {
-    const output = vscode.window.createOutputChannel('OpenCode Usage');
+    // Show detailed usage stats in output channel
     const stats = usageTracker.getStats();
-    output.appendLine(formatUsageOutput(stats));
-    output.show();
+    const output = formatUsageOutput(stats);
+    
+    // Create or reuse output channel
+    const usageChannel = vscode.window.createOutputChannel('OpenCode Usage');
+    usageChannel.clear();
+    usageChannel.appendLine(output);
+    usageChannel.show();
+    
+    // Also focus the dashboard webview
+    if (webviewProvider) {
+      webviewProvider.focus();
+    }
+    void refreshTreeView();
   });
+
+  // ── Open OpenCode Usage Webview ──────────────────────────────────────────
+  reg('opencode-zen.openUsageWebview', async () => {
+    const panel = OpenCodeUsagePanel.initialize(context);
+    await panel.openLogin();
+  });
+
+  // ── Open Usage Dashboard ─────────────────────────────────────────────────
+  reg('opencode-zen.openDashboard', async () => {
+    const panel = OpenCodeUsagePanel.initialize(context);
+    await panel.openWorkspaceUsage();
+  });
+
+  // ── Paste Workspace URL ──────────────────────────────────────────────────
+  reg('opencode-zen.pasteWorkspaceUrl', async () => {
+    const panel = OpenCodeUsagePanel.initialize(context);
+    await panel.promptForWorkspaceUrl();
+  });
+
+  // ── Start usage tracking ─────────────────────────────────────────────────
+  const usageService = OpenCodeUsageService.getInstance();
+  usageService.startAutoRefresh(5 * 60 * 1000); // Refresh every 5 minutes
+  context.subscriptions.push(usageService);
 
   // ── Show output log ───────────────────────────────────────────────────────
   reg('opencode-zen.showOutputLog', () => {

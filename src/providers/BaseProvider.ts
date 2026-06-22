@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ApiFormat } from '../client/modelRegistry';
+import { ApiFormat, isModelRegistryPopulated, refreshModelRegistry } from '../client/modelRegistry';
 
 /**
  * Routing data embedded directly in each model object.
@@ -18,6 +18,11 @@ export interface RoutedModelInfo extends vscode.LanguageModelChatInformation {
     reasoningTokenPrice?: number;
     currency?: string;
   };
+  /**
+   * Configuration schema for model options shown in the chat UI.
+   * This allows users to configure reasoning effort, temperature, etc.
+   */
+  configurationSchema?: vscode.LanguageModelConfigurationSchema;
 }
 
 /**
@@ -72,6 +77,11 @@ export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
     _options: { silent: boolean; configuration?: Record<string, unknown> },
     _token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelChatInformation[]> {
+    // Ensure the model registry is populated before resolving capabilities
+    if (!isModelRegistryPopulated()) {
+      await refreshModelRegistry();
+    }
+
     if (Date.now() - this.lastFetch > this.cacheTtlMs || this.models.length === 0) {
       this.models = await this.getModels().catch(() => this.models);
       this.lastFetch = Date.now();
@@ -94,6 +104,82 @@ export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
   /** Get current cached models without triggering a fetch */
   getCurrentModels(): RoutedModelInfo[] {
     return this.models;
+  }
+
+  // ── Configuration helpers ─────────────────────────────────────────────────
+
+  private static readonly REASONING_DESCRIPTIONS: Record<string, string> = {
+    off:    'No reasoning applied',
+    on:     'Model decides reasoning automatically',
+    low:    'Faster responses with less reasoning',
+    medium: 'Balanced reasoning and speed',
+    high:   'Greater reasoning depth but slower',
+    xhigh:  'Highest reasoning depth but slowest',
+    max:    'Absolute maximum capability with no constraints',
+  };
+
+  /**
+   * Builds the configurationSchema for a model based on its capabilities.
+   * This schema controls what options appear in the chat UI model picker.
+   *
+   * @param supportedLevels - Array of reasoning levels the model supports (e.g. ['low','medium','high'])
+   * @param defaultLevel - Default reasoning level
+   * @returns The configuration schema or undefined if no configurable options
+   */
+  protected buildConfigurationSchema(
+    supportedLevels?: string[],
+    defaultLevel?: string
+  ): vscode.LanguageModelConfigurationSchema | undefined {
+    const properties: NonNullable<vscode.LanguageModelConfigurationSchema['properties']> = {};
+
+    // Add reasoning effort config only when the model supports multiple levels
+    if (supportedLevels && supportedLevels.length > 0) {
+      const defaultEffort = defaultLevel
+        ?? (supportedLevels.includes('high') ? 'high'
+          : supportedLevels.includes('on') ? 'on'
+          : supportedLevels[supportedLevels.length - 1]);
+
+      properties.reasoningEffort = {
+        type: 'string',
+        title: 'Thinking Effort',
+        enum: supportedLevels,
+        default: defaultEffort,
+        description: 'Controls how much reasoning effort the model uses',
+        enumItemLabels: supportedLevels.map(l => l.charAt(0).toUpperCase() + l.slice(1)),
+        enumDescriptions: supportedLevels.map(l => BaseProvider.REASONING_DESCRIPTIONS[l] ?? ''),
+        group: 'navigation',
+      };
+    }
+
+    return Object.keys(properties).length > 0
+      ? { type: 'object', properties }
+      : undefined;
+  }
+
+  /**
+   * Extracts user configuration from the response options.
+   * Merges modelConfiguration (from UI picker) with modelOptions (from the API).
+   *
+   * @param options - The provideLanguageModelChatResponse options
+   * @returns Merged model options including user configuration
+   */
+  protected extractModelOptions(
+    options: vscode.ProvideLanguageModelChatResponseOptions
+  ): Record<string, unknown> {
+    const userConfig = (options as any).modelConfiguration as Record<string, unknown> | undefined;
+    const modelOpts: Record<string, unknown> = { ...options.modelOptions };
+
+    // Apply reasoning effort if configured via the UI picker
+    if (userConfig?.reasoningEffort) {
+      modelOpts.reasoningEffort = userConfig.reasoningEffort;
+    }
+
+    // Apply temperature if configured via the UI picker
+    if (userConfig?.temperature !== undefined) {
+      modelOpts.temperature = userConfig.temperature;
+    }
+
+    return modelOpts;
   }
 
   // ── provideTokenCount ─────────────────────────────────────────────────────

@@ -11,23 +11,32 @@ type StatusBarState =
   | { kind: 'responded'; modelId: string; modelName: string };
 
 function renderStatusBarText(state: StatusBarState, usageStats?: UsageStats): string {
+  // Build Go burn-rate indicator if available
+  let goBurnRate = '';
+  if (usageStats?.goUsage) {
+    const go = usageStats.goUsage;
+    const warn = go.session.percent > 80 || go.weekly.percent > 80 || go.monthly.percent > 80;
+    const icon = warn ? '⚠️' : '🚀';
+    goBurnRate = ` ${icon}Go:${go.session.percent}%·${go.weekly.percent}%·${go.monthly.percent}%`;
+  }
+
   const usageText = usageStats && usageStats.totalRequests > 0
-    ? ` (${usageStats.totalRequests} req · ${formatTokens(usageStats.totalTokens.total)})`
+    ? ` (${usageStats.totalRequests} req · $${usageStats.totalCost.toFixed(2)} · ${formatTokens(usageStats.totalTokens.total)})`
     : '';
 
   switch (state.kind) {
     case 'probing':
-      return `$(sync~spin) Zen${usageText}`;
+      return `$(sync~spin) Zen${goBurnRate}${usageText}`;
     case 'idle':
-      return `$(check) Zen${usageText}`;
+      return `$(check) Zen${goBurnRate}${usageText}`;
     case 'noModels':
-      return `$(warning) Zen${usageText}`;
+      return `$(warning) Zen${goBurnRate}${usageText}`;
     case 'error':
-      return `$(error) Zen${usageText}`;
+      return `$(error) Zen${goBurnRate}${usageText}`;
     case 'streaming':
-      return `$(loading~spin) Zen${usageText}`;
+      return `$(loading~spin) Zen${goBurnRate}${usageText}`;
     case 'responded':
-      return `$(check) Zen${usageText}`;
+      return `$(check) Zen${goBurnRate}${usageText}`;
   }
 }
 
@@ -78,12 +87,28 @@ function renderTooltip(snapshot: StatusSnapshot, usageStats?: UsageStats): strin
   // Usage stats from tracker
   if (usageStats && usageStats.totalRequests > 0) {
     lines.push('**Usage**');
-    lines.push(`${usageStats.totalRequests} requests · ${usageStats.totalTokens.total.toLocaleString()} tokens`);
+    lines.push(`${usageStats.totalRequests} requests · ${usageStats.totalTokens.total.toLocaleString()} tokens · $${usageStats.totalCost.toFixed(4)}`);
     if (Object.keys(usageStats.byProvider).length > 0) {
       for (const [provider, data] of Object.entries(usageStats.byProvider)) {
-        const name = provider === 'opencode-go' ? 'Go' : 'Zen';
-        lines.push(`  ${name}: ${data.requests} req`);
+        const name = provider === 'opencode-go' ? 'Go' : 
+                     provider === 'opencode-free' ? 'Free' :
+                     provider === 'lmstudio' ? 'LM Studio' :
+                     provider === 'ollama-plus' ? 'Ollama' : 'Zen';
+        lines.push(`  ${name}: ${data.requests} req · $${data.cost.toFixed(4)}`);
       }
+    }
+    lines.push('');
+  }
+
+  // Go burn-rate details
+  if (usageStats?.goUsage) {
+    const go = usageStats.goUsage;
+    lines.push('**🚀 Go Subscription Usage**');
+    lines.push(`  Session (5h): ${go.session.percent}% · $${go.session.spent.toFixed(2)}/$${go.session.limit}`);
+    lines.push(`  Weekly:       ${go.weekly.percent}% · $${go.weekly.spent.toFixed(2)}/$${go.weekly.limit}`);
+    lines.push(`  Monthly:      ${go.monthly.percent}% · $${go.monthly.spent.toFixed(2)}/$${go.monthly.limit}`);
+    if (go.today.requests > 0) {
+      lines.push(`  Today: $${go.today.cost.toFixed(2)} · ${go.today.requests} req`);
     }
     lines.push('');
   }

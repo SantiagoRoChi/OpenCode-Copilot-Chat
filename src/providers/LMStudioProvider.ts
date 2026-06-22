@@ -5,6 +5,7 @@ import { ServerData } from '../webview/openCodeWebviewProvider';
 import { streamOpenAIChat } from './sdk/openaiChat';
 
 // Response shape from /api/v1/models (LM Studio native API)
+// https://lmstudio.ai/docs/developer/rest/list
 interface LMStudioModel {
   key: string;
   display_name: string;
@@ -16,7 +17,10 @@ interface LMStudioModel {
   capabilities?: {
     vision?: boolean;
     trained_for_tool_use?: boolean;
-    reasoning?: { allowed_options?: string[]; default?: string };
+    reasoning?: {
+      allowed_options?: Array<'off' | 'on' | 'low' | 'medium' | 'high'>;
+      default?: 'off' | 'on' | 'low' | 'medium' | 'high';
+    };
   };
   loaded_instances?: Array<{ id: string; state?: string }>;
 }
@@ -107,7 +111,7 @@ export class LMStudioProvider extends BaseProvider {
     const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
 
     // LM Studio uses OpenAI-compatible API at /v1/chat/completions
-    const baseUrl = rm._url.replace(/\/v1\/chat\/completions$/, '');
+    const baseUrl = rm._url.replace(/\/chat\/completions$/, '');
 
     await streamOpenAIChat(
       '', // LM Studio doesn't require API key
@@ -116,7 +120,7 @@ export class LMStudioProvider extends BaseProvider {
       rm.maxOutputTokens,
       messages,
       tools,
-      options.modelOptions ?? {},
+      this.extractModelOptions(options),
       progress,
       token,
     );
@@ -146,7 +150,9 @@ export class LMStudioProvider extends BaseProvider {
           const displayName = m.display_name;
           const isVision = m.capabilities?.vision === true;
           const supportsTools = m.capabilities?.trained_for_tool_use === true;
-          const supportsReasoning = m.capabilities?.reasoning != null;
+          const reasoning = m.capabilities?.reasoning;
+          // LM Studio uses: "off" | "on" | "low" | "medium" | "high"
+          const supportsReasoning = reasoning != null && reasoning.allowed_options != null;
           const quantStr = m.quantization?.name ?? '';
 
           const instances = m.loaded_instances && m.loaded_instances.length > 0
@@ -174,18 +180,23 @@ export class LMStudioProvider extends BaseProvider {
               _apiFormat: 'openai-compatible',
             };
 
-            if (supportsReasoning) {
-              (info as any).configurationSchema = {
-                properties: {
-                  reasoningEffort: {
-                    type: 'string',
-                    enum: ['low', 'medium', 'high'],
-                    default: 'medium',
-                    description: 'Reasoning depth for thinking models.',
-                    enumItemLabels: ['Low', 'Medium', 'High'],
-                  },
-                },
-              };
+            // Add configuration schema based on model capabilities
+            // LM Studio reasoning levels: "off" | "on" | "low" | "medium" | "high"
+            if (supportsReasoning && reasoning?.allowed_options) {
+              const allowedOptions = reasoning.allowed_options;
+              
+              // Use all levels from the model (including "off" if supported)
+              const levels = [...allowedOptions];
+              
+              if (levels.length > 0) {
+                const defaultLevel = reasoning.default && levels.includes(reasoning.default)
+                  ? reasoning.default
+                  : undefined;
+                
+                this.out.appendLine(`[LMStudio] ${m.key}: reasoning levels = ${levels.join(', ')}`);
+                
+                info.configurationSchema = this.buildConfigurationSchema(levels, defaultLevel);
+              }
             }
 
             all.push(info);

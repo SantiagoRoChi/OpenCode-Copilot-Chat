@@ -3,17 +3,26 @@ import * as vscode from 'vscode';
 /**
  * OpenCode Subagent Tool
  *
- * Allows Copilot Chat to spawn a subagent that delegates to an OpenCode provider.
- * The subagent runs with a restricted tool set and temperature 0.
+ * Allows VS Code Chat to spawn a subagent that delegates to any registered
+ * OpenCode/LMStudio/Ollama provider. Supports model selection to pick the
+ * best model for each subtask.
  *
- * Based on VS Code Copilot's ExecutionSubagentTool pattern.
+ * Follows the same parameter schema as VS Code's built-in `runSubagent` tool
+ * so the AI model can use it seamlessly.
  */
 
 export interface SubagentParams {
-  /** What to execute — can include commands or task descriptions */
-  query: string;
-  /** User-visible description shown while the tool runs */
+  /** A detailed description of the task for the agent to perform */
+  prompt: string;
+  /** A short (3-5 word) description of the task */
   description: string;
+  /** Optional model for the subagent. Format: "Model Name (Vendor)" */
+  model?: string;
+}
+
+interface ProviderEntry {
+  vendor: string;
+  provider: vscode.LanguageModelChatProvider;
 }
 
 export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentParams> {
@@ -29,6 +38,13 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
     OpenCodeSubagentTool.providerLookup.delete(vendor);
   }
 
+  /** Get all registered providers */
+  static getProviders(): ProviderEntry[] {
+    return Array.from(OpenCodeSubagentTool.providerLookup.entries()).map(
+      ([vendor, provider]) => ({ vendor, provider })
+    );
+  }
+
   async prepareInvocation(
     options: vscode.LanguageModelToolInvocationPrepareOptions<SubagentParams>,
     _token: vscode.CancellationToken
@@ -42,48 +58,61 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
     options: vscode.LanguageModelToolInvocationOptions<SubagentParams>,
     token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelToolResult> {
-    const { query, description } = options.input;
+    const { prompt, description, model: modelParam } = options.input;
 
-    // Find the first available provider
-    const vendors = Array.from(OpenCodeSubagentTool.providerLookup.keys());
-    if (vendors.length === 0) {
+    // Find all available providers
+    const providers = OpenCodeSubagentTool.getProviders();
+    if (providers.length === 0) {
       const part = new vscode.LanguageModelTextPart(
         'No OpenCode providers available. Configure an API key or connect to a server first.'
       );
       return new vscode.LanguageModelToolResult([part]);
     }
 
-    const vendor = vendors[0];
-    const provider = OpenCodeSubagentTool.providerLookup.get(vendor)!;
-
     try {
-      // Build a single user message with the query
-      const messages = [
-        vscode.LanguageModelChatMessage.User(query),
-      ];
+      // Resolve which model to use
+      let targetProvider: vscode.LanguageModelChatProvider;
+      let targetModel: vscode.LanguageModelChatInformation | undefined;
 
-      // Use the first available model from the provider
-      const models = await provider.provideLanguageModelChatInformation(
-        { silent: true },
-        token
-      );
-
-      if (!models || models.length === 0) {
-        const part = new vscode.LanguageModelTextPart(
-          `Provider "${vendor}" has no available models.`
+      if (modelParam) {
+        // Model specified — search all providers for a matching model
+        const resolved = await this.resolveModel(modelParam, providers, token);
+        if (!resolved) {
+          const available = await this.getAvailableModelsList(providers, token);
+          const part = new vscode.LanguageModelTextPart(
+            `Model "${modelParam}" not found. Available models:\n${available}`
+          );
+          return new vscode.LanguageModelToolResult([part]);
+        }
+        targetProvider = resolved.provider;
+        targetModel = resolved.model;
+      } else {
+        // No model specified — use the first available model from any provider
+        targetProvider = providers[0].provider;
+        const models = await targetProvider.provideLanguageModelChatInformation(
+          { silent: true }, token
         );
-        return new vscode.LanguageModelToolResult([part]);
+        if (!models || models.length === 0) {
+          const part = new vscode.LanguageModelTextPart(
+            `Provider "${providers[0].vendor}" has no available models.`
+          );
+          return new vscode.LanguageModelToolResult([part]);
+        }
+        targetModel = models[0];
       }
 
-      const model = models[0];
+      // Build the chat request
+      const messages = [
+        vscode.LanguageModelChatMessage.User(prompt),
+      ];
 
       // Send request to the provider
       const responseParts: string[] = [];
 
-      await provider.provideLanguageModelChatResponse(
-        model,
+      await targetProvider.provideLanguageModelChatResponse(
+        targetModel,
         messages,
-        { tools: [], toolMode: vscode.LanguageModelChatToolMode.Auto },  // Subagent runs without additional tools
+        { tools: [], toolMode: vscode.LanguageModelChatToolMode.Auto },
         {
           report: (part) => {
             if (part instanceof vscode.LanguageModelTextPart) {
@@ -103,10 +132,10 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
 
       // Add tool metadata for tracking
       (result as any).toolMetadata = {
-        query,
+        prompt: prompt.substring(0, 100),
         description,
-        vendor,
-        modelId: model.id,
+        vendor: this.getVendorForModel(targetModel, providers),
+        modelId: targetModel.id,
       };
       (result as any).toolResultMessage = new vscode.MarkdownString(
         `**${description}** completed`
@@ -120,5 +149,71 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
       );
       return new vscode.LanguageModelToolResult([part]);
     }
+  }
+
+  /**
+   * Resolve a model by qualified name like "Claude Sonnet (opencode-zen)"
+   * Searches across all registered providers.
+   */
+  private async resolveModel(
+    modelParam: string,
+    providers: ProviderEntry[],
+    token: vscode.CancellationToken
+  ): Promise<{ provider: vscode.LanguageModelChatProvider; model: vscode.LanguageModelChatInformation } | undefined> {
+    for (const entry of providers) {
+      const models = await entry.provider.provideLanguageModelChatInformation(
+        { silent: true }, token
+      );
+      if (!models) continue;
+
+      for (const model of models) {
+        // Match by ID
+        if (model.id === modelParam || model.id.includes(modelParam)) {
+          return { provider: entry.provider, model };
+        }
+        // Match by name (case-insensitive partial match)
+        if (model.name.toLowerCase().includes(modelParam.toLowerCase())) {
+          return { provider: entry.provider, model };
+        }
+        // Match qualified name format "Name (Vendor)"
+        const qualifiedName = `${model.name} (${entry.vendor})`;
+        if (qualifiedName.toLowerCase().includes(modelParam.toLowerCase())) {
+          return { provider: entry.provider, model };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /** Get a formatted list of available models */
+  private async getAvailableModelsList(
+    providers: ProviderEntry[],
+    token: vscode.CancellationToken
+  ): Promise<string> {
+    const lines: string[] = [];
+    for (const entry of providers) {
+      const models = await entry.provider.provideLanguageModelChatInformation(
+        { silent: true }, token
+      );
+      if (models && models.length > 0) {
+        for (const model of models) {
+          lines.push(`- ${model.name} (${entry.vendor})`);
+        }
+      }
+    }
+    return lines.length > 0 ? lines.join('\n') : 'No models available.';
+  }
+
+  /** Find the vendor for a given model */
+  private getVendorForModel(
+    model: vscode.LanguageModelChatInformation,
+    providers: ProviderEntry[]
+  ): string {
+    for (const entry of providers) {
+      if (model.id.startsWith(`${entry.vendor}:`)) {
+        return entry.vendor;
+      }
+    }
+    return providers[0]?.vendor ?? 'unknown';
   }
 }

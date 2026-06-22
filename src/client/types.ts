@@ -7,6 +7,38 @@ export interface ApiModel {
   owned_by: string;
 }
 
+/**
+ * Extended model info from models.dev API.
+ * This is the primary source for model capabilities and context sizes.
+ */
+export interface ModelsDevModel {
+  id: string;
+  name: string;
+  family?: string;
+  attachment?: boolean;
+  reasoning?: boolean;
+  tool_call?: boolean;
+  temperature?: boolean;
+  interleaved?: boolean | { field: string };
+  limit?: {
+    context?: number;   // max input tokens / context window
+    output?: number;    // max output tokens
+    input?: number;
+  };
+  cost?: {
+    input?: number;
+    output?: number;
+    cache_read?: number;
+    cache_write?: number;
+  };
+  modalities?: {
+    input?: string[];
+    output?: string[];
+  };
+  status?: string;
+  structured_output?: boolean;
+}
+
 export interface ApiModelsResponse {
   object: string;
   data: ApiModel[];

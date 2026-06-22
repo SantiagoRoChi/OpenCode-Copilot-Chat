@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/VS%20Code-1.120+-blue.svg" alt="VS Code Version">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-3.3.0-green.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-3.6.0-green.svg" alt="Version">
 </p>
 
 <p align="center">
@@ -267,6 +267,39 @@ extension.ts
 - Fixed reasoning blocks (`reasoningText` instead of `thinkingText`)
 - Fixed auth header caching (pass API key directly to SDK)
 
+## 🚀 Nuevas Funcionalidades (v3.6.0)
+
+### 📊 OpenCode Usage Tracking
+- **Datos de uso en tiempo real** desde la API de OpenCode
+- **Burn-rate de suscripción Go**: Seguimiento de 5h rolling, semanal y mensual
+- **Costo por modelo**: Cálculo automático basado en tokens y precios
+- **Status bar mejorado**: Muestra burn-rate con indicadores de advertencia
+
+### 🤖 Agent Window Support
+- **Proveedores para Agents Window**: Registra instancias duplicadas con sufijo \-agent\`r
+- **Configurable**: \opencode-zen.enableAgentWindow\ (default: true)
+- **Copilot CLI**: Modelos disponibles en Agents Window
+
+### 🔐 OpenCode Auth Service
+- **Gestión centralizada**: Workspace ID, cookie de auth, API keys
+- **Descubrimiento automático**: Extrae workspace ID de páginas OpenCode
+- **Server ID dinámico**: Descubre server ID del HTML de la página
+
+### 🌐 OpenCode Usage Panel
+- **Simple Browser integrado**: Login OAuth en panel de VS Code
+- **Servidor HTTP local**: Captura workspace ID y cookie automáticamente
+- **Sin inputs manuales**: Todo el proceso es automático
+
+### 📈 Status Bar Mejorado
+- **Burn-rate de Go**: Muestra 5h/weekly/monthly
+- **Indicadores de advertencia**: ⚠️ cuando se acerca a límites
+- **Costo por request**: Muestra costo estimado
+
+### 🌳 Tree View Mejorado
+- **Comandos de registro**: Login, Configure Workspace
+- **Datos de burn-rate**: Muestra en dashboard
+- **Acceso directo**: A todas las opciones de configuración
+
 ## ⚙️ Configuración
 
 | Propiedad | Default | Descripción |
@@ -301,3 +334,5 @@ MIT
 ---
 
 Hecho con ❤️ para desarrolladores que usan OpenCode
+
+

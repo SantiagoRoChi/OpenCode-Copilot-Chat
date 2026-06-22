@@ -6,8 +6,6 @@ import { getModelCapabilities, getModelEndpoint } from '../client/modelRegistry'
 import { streamOpenAIChat, TokenUsage as OpenAITokenUsage } from './sdk/openaiChat';
 import { streamAnthropicChat, TokenUsage as AnthropicTokenUsage } from './sdk/anthropicChat';
 
-interface ApiModel { id: string; }
-
 export class OpenCodeFreeProvider extends BaseProvider {
   private apiKey = '';
   private readonly storage: SecretStorage;
@@ -52,7 +50,9 @@ export class OpenCodeFreeProvider extends BaseProvider {
     }
 
     const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
-    const modelOpts = options.modelOptions ?? {};
+    
+    // Extract model options including user configuration from the UI
+    const modelOpts = this.extractModelOptions(options);
 
     const handleUsage = (usage: AnthropicTokenUsage | OpenAITokenUsage) => {
       if (this.onUsageCallback) {
@@ -110,7 +110,7 @@ export class OpenCodeFreeProvider extends BaseProvider {
   private toModelInfo(id: string): RoutedModelInfo {
     const caps = getModelCapabilities(id);
     const ep = getModelEndpoint('zen', id);
-    return {
+    const info: RoutedModelInfo = {
       id,
       name: caps.name !== id ? caps.name : id,
       family: caps.family,
@@ -128,6 +128,13 @@ export class OpenCodeFreeProvider extends BaseProvider {
         currency: 'USD',
       } : undefined,
     };
+
+    // Build configuration schema based on model capabilities
+    info.configurationSchema = this.buildConfigurationSchema(
+      caps.supportedReasoningLevels
+    );
+
+    return info;
   }
 
   override dispose(): void {

@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { window, commands } from 'vscode';
 
 /**
  * Shows a chat input notification when a provider is missing configuration.
@@ -8,11 +8,11 @@ export function showMissingConfigNotification(
   providerName: string,
   configureCommand: string
 ): void {
-  const vscodeAny = vscode as any;
+  const vscodeAny = window as typeof window & { showChatInputNotification?: (opts: { message: string; severity: 0 | 1 | 2; action?: { label: string; command: string } }) => void };
   if (typeof vscodeAny.showChatInputNotification === 'function') {
     void vscodeAny.showChatInputNotification({
       message: `${providerName} is not configured. Set it up to start using the model.`,
-      severity: vscodeAny.SeverityLevel?.Warning ?? 1,
+      severity: 1 satisfies 0 | 1 | 2,
       action: {
         label: 'Configure',
         command: configureCommand,
@@ -20,12 +20,12 @@ export function showMissingConfigNotification(
     });
   } else {
     // Fallback to standard information message
-    void vscode.window.showInformationMessage(
+    void window.showInformationMessage(
       `${providerName} is not configured.`,
       'Configure'
     ).then(choice => {
       if (choice === 'Configure') {
-        void vscode.commands.executeCommand(configureCommand);
+        void commands.executeCommand(configureCommand);
       }
     });
   }
@@ -38,14 +38,14 @@ export function showConnectionErrorNotification(
   providerName: string,
   error: string
 ): void {
-  const vscodeAny = vscode as any;
+  const vscodeAny = window as typeof window & { showChatInputNotification?: (opts: { message: string; severity: 0 | 1 | 2 }) => void };
   if (typeof vscodeAny.showChatInputNotification === 'function') {
     void vscodeAny.showChatInputNotification({
       message: `Connection error for ${providerName}: ${error}`,
-      severity: vscodeAny.SeverityLevel?.Error ?? 2,
+      severity: 2 satisfies 0 | 1 | 2,
     });
   } else {
-    void vscode.window.showErrorMessage(`Connection error for ${providerName}: ${error}`);
+    void window.showErrorMessage(`Connection error for ${providerName}: ${error}`);
   }
 }
 
@@ -53,11 +53,13 @@ export function showConnectionErrorNotification(
  * Shows a chat input notification for successful connections.
  */
 export function showConnectedNotification(providerName: string): void {
-  const vscodeAny = vscode as any;
+  const vscodeAny = window as typeof window & { showChatInputNotification?: (opts: { message: string; severity: 0 | 1 | 2 }) => void };
   if (typeof vscodeAny.showChatInputNotification === 'function') {
     void vscodeAny.showChatInputNotification({
       message: `${providerName} connected successfully.`,
-      severity: vscodeAny.SeverityLevel?.Info ?? 0,
+      severity: 0 satisfies 0 | 1 | 2,
     });
+  } else {
+    void window.showInformationMessage(`${providerName} connected successfully.`);
   }
 }

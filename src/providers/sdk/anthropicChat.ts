@@ -1,6 +1,6 @@
-import * as vscode from 'vscode';
+import { LanguageModelChatRequestMessage, LanguageModelChatTool, Progress, LanguageModelResponsePart, CancellationToken, LanguageModelTextPart, LanguageModelToolCallPart, LanguageModelDataPart } from 'vscode';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { streamText, LanguageModel, tool } from 'ai';
+import { streamText, LanguageModel, tool, Tool } from 'ai';
 import { jsonSchema } from '@ai-sdk/provider-utils';
 import { convertMessages, mapModelOptions } from './utils';
 
@@ -18,11 +18,11 @@ export async function streamAnthropicChat(
   baseUrl: string,
   modelId: string,
   maxTokens: number | undefined,
-  messages: readonly vscode.LanguageModelChatRequestMessage[],
-  tools: vscode.LanguageModelChatTool[] | undefined,
+  messages: readonly LanguageModelChatRequestMessage[],
+  tools: LanguageModelChatTool[] | undefined,
   modelOptions: Record<string, unknown>,
-  progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-  token: vscode.CancellationToken,
+  progress: Progress<LanguageModelResponsePart>,
+  token: CancellationToken,
   onUsage?: (usage: TokenUsage) => void,
 ): Promise<void> {
   const anthropic = createAnthropic({ apiKey, baseURL: baseUrl });
@@ -32,7 +32,7 @@ export async function streamAnthropicChat(
   const chatMessages = vsCodeMessages.filter(m => m.role !== 'system');
 
   // Build tool set for the AI SDK
-  const sdkTools: Record<string, any> = {};
+  const sdkTools: Record<string, Tool> = {};
   if (tools?.length) {
     for (const t of tools) {
       sdkTools[t.name] = tool({
@@ -53,7 +53,7 @@ export async function streamAnthropicChat(
     messages: chatMessages as any,
     ...(systemMessage ? { system: systemMessage.content as string } : {}),
     maxOutputTokens: maxTokens ?? 8192,
-    tools: Object.keys(sdkTools).length > 0 ? (sdkTools as any) : undefined,
+    tools: Object.keys(sdkTools).length > 0 ? (sdkTools as unknown as Record<string, Tool>) : undefined,
     abortSignal: abort.signal,
     ...mapModelOptions(modelOptions),
     onError: (event) => { streamError = event.error; },
@@ -65,7 +65,7 @@ export async function streamAnthropicChat(
   try {
     for await (const textPart of result.textStream) {
       if (token.isCancellationRequested) break;
-      progress.report(new vscode.LanguageModelTextPart(textPart));
+      progress.report(new LanguageModelTextPart(textPart));
       completionTokens += estimateTokens(textPart);
     }
 
@@ -77,7 +77,7 @@ export async function streamAnthropicChat(
       for (const tc of toolCalls) {
         if (token.isCancellationRequested) break;
         progress.report(
-          new vscode.LanguageModelToolCallPart(tc.toolCallId, tc.toolName, tc.input as Record<string, unknown>),
+          new LanguageModelToolCallPart(tc.toolCallId, tc.toolName, tc.input as Record<string, unknown>),
         );
       }
     }
@@ -85,8 +85,8 @@ export async function streamAnthropicChat(
     // Report reasoning if available
     const reasoningText = await Promise.resolve(result.reasoningText).catch(() => undefined);
     if (reasoningText) {
-      const ThinkingPart = (vscode as any).LanguageModelThinkingPart;
-      if (ThinkingPart) progress.report(new ThinkingPart(reasoningText));
+      const ThinkingPartClass = (globalThis as unknown as { vscode?: { LanguageModelThinkingPart?: new (...args: unknown[]) => LanguageModelResponsePart } }).vscode?.LanguageModelThinkingPart;
+      if (ThinkingPartClass) progress.report(new ThinkingPartClass(reasoningText));
     }
 
     // Report usage to VS Code for context counter using LanguageModelDataPart
@@ -103,7 +103,7 @@ export async function streamAnthropicChat(
         };
         
         // Use the static json() method which is part of the public API
-        progress.report(vscode.LanguageModelDataPart.json(usageData, 'usage'));
+        progress.report(LanguageModelDataPart.json(usageData, 'usage'));
         
         // Callback for internal usage tracking
         if (onUsage) {
@@ -123,20 +123,37 @@ export async function streamAnthropicChat(
         onUsage({ prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens });
       }
     }
-  } catch (err: any) {
-    throw new Error(`Anthropic stream error: ${err.message ?? err}`);
+  } catch (err: unknown) {
+    const message = extractErrorMessage(err);
+    throw new Error(`Anthropic stream error: ${message}`);
   }
+}
+
+function extractErrorMessage(err: unknown): string {
+  if (typeof err === 'string') return err;
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    if ('message' in err && typeof (err as Record<string, unknown>).message === 'string') {
+      return (err as Record<string, string>).message;
+    }
+    if ('error' in err && typeof (err as Record<string, unknown>).error === 'object') {
+      const inner = (err as Record<string, { message?: string }>).error;
+      if (inner?.message) return inner.message;
+    }
+    return JSON.stringify(err);
+  }
+  return String(err);
 }
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function estimatePromptTokens(messages: readonly vscode.LanguageModelChatRequestMessage[]): number {
+function estimatePromptTokens(messages: readonly LanguageModelChatRequestMessage[]): number {
   let total = 0;
   for (const msg of messages) {
     for (const part of msg.content) {
-      if (part instanceof vscode.LanguageModelTextPart) {
+      if (part instanceof LanguageModelTextPart) {
         total += estimateTokens(part.value);
       }
     }

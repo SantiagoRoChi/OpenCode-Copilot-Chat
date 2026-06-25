@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { Disposable, Uri, ViewColumn, WebviewPanel, window } from 'vscode';
 import { OpenCodeUsageService, UsageData } from '../integration/openCodeUsageService';
 
 /**
@@ -8,20 +8,20 @@ import { OpenCodeUsageService, UsageData } from '../integration/openCodeUsageSer
 export class OpenCodeDashboardPanel {
   public static readonly viewType = 'opencode-zen-dashboard-panel';
   private static currentPanel: OpenCodeDashboardPanel | undefined;
-  private readonly panel: vscode.WebviewPanel;
-  private readonly extensionUri: vscode.Uri;
+  private readonly panel: WebviewPanel;
+  private readonly extensionUri: Uri;
   private readonly usageService: OpenCodeUsageService;
-  private disposables: vscode.Disposable[] = [];
+  private disposables: Disposable[] = [];
 
-  public static createOrShow(extensionUri: vscode.Uri): void {
-    const column = vscode.ViewColumn.One;
+  public static createOrShow(extensionUri: Uri): void {
+    const column = ViewColumn.One;
 
     if (OpenCodeDashboardPanel.currentPanel) {
       OpenCodeDashboardPanel.currentPanel.panel.reveal(column);
       return;
     }
 
-    const panel = vscode.window.createWebviewPanel(
+    const panel = window.createWebviewPanel(
       OpenCodeDashboardPanel.viewType,
       'OpenCode Usage Dashboard',
       column,
@@ -35,7 +35,7 @@ export class OpenCodeDashboardPanel {
     OpenCodeDashboardPanel.currentPanel = new OpenCodeDashboardPanel(panel, extensionUri);
   }
 
-  private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
+  private constructor(panel: WebviewPanel, extensionUri: Uri) {
     this.panel = panel;
     this.extensionUri = extensionUri;
     this.usageService = OpenCodeUsageService.getInstance();

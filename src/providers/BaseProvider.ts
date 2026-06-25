@@ -1,13 +1,7 @@
-import * as vscode from 'vscode';
-import { ApiFormat, isModelRegistryPopulated, refreshModelRegistry } from '../client/modelRegistry';
+import { EventEmitter, CancellationToken, LanguageModelChatInformation, LanguageModelChatMessage, LanguageModelChatProvider, LanguageModelChatRequestMessage, LanguageModelResponsePart, LanguageModelTextPart, Progress, ProvideLanguageModelChatResponseOptions } from 'vscode';
+import { ApiFormat, isModelRegistryPopulated, refreshModelRegistry, getModelCapabilities } from '../client/modelRegistry';
 
-/**
- * Routing data embedded directly in each model object.
- * VS Code returns the exact object from provideLanguageModelChatInformation
- * back to provideLanguageModelChatResponse, so we can read _url/_headers/_apiFormat
- * without any server lookup map.
- */
-export interface RoutedModelInfo extends vscode.LanguageModelChatInformation {
+export interface RoutedModelInfo extends LanguageModelChatInformation {
   readonly _url: string;
   readonly _headers: Record<string, string>;
   readonly _apiId: string;
@@ -18,23 +12,15 @@ export interface RoutedModelInfo extends vscode.LanguageModelChatInformation {
     reasoningTokenPrice?: number;
     currency?: string;
   };
-  /**
-   * Configuration schema for model options shown in the chat UI.
-   * This allows users to configure reasoning effort, temperature, etc.
-   */
   configurationSchema?: LanguageModelConfigurationSchema;
 }
 
-/**
- * Local interface for LanguageModelConfigurationSchema
- * since it may not be available in all VS Code API versions.
- */
 export interface LanguageModelConfigurationProperty {
   type: string;
   title?: string;
   description?: string;
-  default?: string;
-  enum?: string[];
+  default?: string | number;
+  enum?: (string | number)[];
   enumItemLabels?: string[];
   enumDescriptions?: string[];
   group?: string;
@@ -45,25 +31,12 @@ export interface LanguageModelConfigurationSchema {
   properties?: Record<string, LanguageModelConfigurationProperty>;
 }
 
-/**
- * Base class for all LM providers (OpenAI, Anthropic, and compatible).
- *
- * Responsibilities:
- *  - Model discovery and caching (provideLanguageModelChatInformation)
- *  - Token counting (provideTokenCount)
- *  - onDidChangeLanguageModelChatInformation event
- *
- * Subclasses ONLY need to implement:
- *  - getModels(): discover and return RoutedModelInfo[]
- *  - provideLanguageModelChatResponse(): stream the chat response
- *    using the AI SDK handlers in ./sdk/
- */
-export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
+export abstract class BaseProvider implements LanguageModelChatProvider {
   protected models: RoutedModelInfo[] = [];
   protected lastFetch = 0;
   protected readonly cacheTtlMs = 5 * 60 * 1000;
 
-  private readonly _onDidChange = new vscode.EventEmitter<void>();
+  private readonly _onDidChange = new EventEmitter<void>();
   readonly onDidChangeLanguageModelChatInformation = this._onDidChange.event;
 
   protected fire(): void {
@@ -74,30 +47,20 @@ export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
     this._onDidChange.dispose();
   }
 
-  // ── Subclass contract ─────────────────────────────────────────────────────
-
-  /** Discover models and return them with routing data embedded. */
   protected abstract getModels(): Promise<RoutedModelInfo[]>;
 
-  /**
-   * Stream a chat response for the given model.
-   * Each subclass implements this — use the SDK handlers in ./sdk/.
-   */
   abstract provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatRequestMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
+    model: LanguageModelChatInformation,
+    messages: readonly LanguageModelChatRequestMessage[],
+    options: ProvideLanguageModelChatResponseOptions,
+    progress: Progress<LanguageModelResponsePart>,
+    token: CancellationToken
   ): Promise<void>;
-
-  // ── provideLanguageModelChatInformation ───────────────────────────────────
 
   async provideLanguageModelChatInformation(
     _options: { silent: boolean; configuration?: Record<string, unknown> },
-    _token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelChatInformation[]> {
-    // Ensure the model registry is populated before resolving capabilities
+    _token: CancellationToken
+  ): Promise<LanguageModelChatInformation[]> {
     if (!isModelRegistryPopulated()) {
       await refreshModelRegistry();
     }
@@ -106,7 +69,7 @@ export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
       this.models = await this.getModels().catch(() => this.models);
       this.lastFetch = Date.now();
     }
-    return this.models as vscode.LanguageModelChatInformation[];
+    return this.models as LanguageModelChatInformation[];
   }
 
   invalidateCache(): void {
@@ -121,12 +84,9 @@ export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
     }).catch(() => undefined);
   }
 
-  /** Get current cached models without triggering a fetch */
   getCurrentModels(): RoutedModelInfo[] {
     return this.models;
   }
-
-  // ── Configuration helpers ─────────────────────────────────────────────────
 
   private static readonly REASONING_DESCRIPTIONS: Record<string, string> = {
     off:    'No reasoning applied',
@@ -138,23 +98,64 @@ export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
     max:    'Absolute maximum capability with no constraints',
   };
 
-  /**
-   * Builds the configurationSchema for a model based on its capabilities.
-   * This schema controls what options appear in the chat UI model picker.
-   *
-   * @param supportedLevels - Array of reasoning levels the model supports (e.g. ['low','medium','high'])
-   * @param defaultLevel - Default reasoning level
-   * @returns The configuration schema or undefined if no configurable options
-   */
+  private static familyDefaultReasoning(family: string, levels: string[]): string | undefined {
+    const familyLC = family.toLowerCase();
+    if (familyLC.includes('claude') || familyLC.includes('sonnet') || familyLC.includes('opus')) {
+      return levels.includes('high') ? 'high' : undefined;
+    }
+    if (familyLC.includes('haiku')) {
+      return levels.includes('medium') ? 'medium' : undefined;
+    }
+    if (familyLC.includes('gpt') || familyLC.includes('openai') || familyLC.includes('codex')) {
+      return levels.includes('medium') ? 'medium' : undefined;
+    }
+    if (familyLC.includes('deepseek')) {
+      return levels.includes('high') ? 'high' : undefined;
+    }
+    if (familyLC.includes('gemini') || familyLC.includes('google')) {
+      return levels.includes('medium') ? 'medium' : undefined;
+    }
+    if (familyLC.includes('qwen') || familyLC.includes('minimax')) {
+      return levels.includes('low') ? 'low' : undefined;
+    }
+    return undefined;
+  }
+
+  /** Build context size options based on model's max input tokens */
+  private static getContextSizeOptions(maxInputTokens: number): { value: number; description: string; isDefault: boolean }[] | undefined {
+    if (maxInputTokens <= 16000) return undefined;
+    const defaultMax = Math.min(maxInputTokens, 32000);
+    const midMax = Math.min(maxInputTokens, 64000);
+    const fullMax = maxInputTokens;
+
+    if (defaultMax >= fullMax) return undefined;
+
+    return [
+      { value: defaultMax, description: 'Default recommended context size', isDefault: true },
+      ...(midMax > defaultMax ? [{ value: midMax, description: 'Larger context', isDefault: false }] : []),
+      { value: fullMax, description: 'Full context window', isDefault: false },
+    ];
+  }
+
+  private static formatTokenCount(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(0) + 'K';
+    return String(n);
+  }
+
   protected buildConfigurationSchema(
     supportedLevels?: string[],
-    defaultLevel?: string
+    defaultLevel?: string,
+    family?: string,
+    maxInputTokens?: number
   ): LanguageModelConfigurationSchema | undefined {
     const properties: NonNullable<LanguageModelConfigurationSchema['properties']> = {};
 
-    // Add reasoning effort config only when the model supports multiple levels
     if (supportedLevels && supportedLevels.length > 0) {
-      const defaultEffort = defaultLevel
+      const familyDefault = family
+        ? BaseProvider.familyDefaultReasoning(family, supportedLevels)
+        : undefined;
+      const defaultEffort = defaultLevel ?? familyDefault
         ?? (supportedLevels.includes('high') ? 'high'
           : supportedLevels.includes('on') ? 'on'
           : supportedLevels[supportedLevels.length - 1]);
@@ -171,50 +172,59 @@ export abstract class BaseProvider implements vscode.LanguageModelChatProvider {
       };
     }
 
+    // Context size configuration
+    if (maxInputTokens && maxInputTokens > 16000) {
+      const ctxOptions = BaseProvider.getContextSizeOptions(maxInputTokens);
+      if (ctxOptions) {
+        properties.contextSize = {
+          type: 'number',
+          title: 'Context Size',
+          enum: ctxOptions.map(o => o.value),
+          enumItemLabels: ctxOptions.map(o => BaseProvider.formatTokenCount(o.value)),
+          enumDescriptions: ctxOptions.map(o => o.description),
+          default: ctxOptions.find(o => o.isDefault)?.value,
+          group: 'tokens',
+        };
+      }
+    }
+
     return Object.keys(properties).length > 0
       ? { type: 'object', properties }
       : undefined;
   }
 
-  /**
-   * Extracts user configuration from the response options.
-   * Merges modelConfiguration (from UI picker) with modelOptions (from the API).
-   *
-   * @param options - The provideLanguageModelChatResponse options
-   * @returns Merged model options including user configuration
-   */
   protected extractModelOptions(
-    options: vscode.ProvideLanguageModelChatResponseOptions
+    options: ProvideLanguageModelChatResponseOptions
   ): Record<string, unknown> {
-    const userConfig = (options as any).modelConfiguration as Record<string, unknown> | undefined;
+    const userConfig = (options as unknown as { modelConfiguration?: Record<string, unknown> }).modelConfiguration;
     const modelOpts: Record<string, unknown> = { ...options.modelOptions };
 
-    // Apply reasoning effort if configured via the UI picker
     if (userConfig?.reasoningEffort) {
       modelOpts.reasoningEffort = userConfig.reasoningEffort;
     }
 
-    // Apply temperature if configured via the UI picker
     if (userConfig?.temperature !== undefined) {
       modelOpts.temperature = userConfig.temperature;
+    }
+
+    if (userConfig?.contextSize !== undefined) {
+      modelOpts.maxTokens = userConfig.contextSize;
     }
 
     return modelOpts;
   }
 
-  // ── provideTokenCount ─────────────────────────────────────────────────────
-
   async provideTokenCount(
-    _model: vscode.LanguageModelChatInformation,
-    text: string | vscode.LanguageModelChatMessage,
-    _token: vscode.CancellationToken
+    _model: LanguageModelChatInformation,
+    text: string | LanguageModelChatMessage,
+    _token: CancellationToken
   ): Promise<number> {
     if (typeof text === 'string') {
       return Math.ceil(text.length / 4);
     }
     let chars = 0;
     for (const part of text.content) {
-      if (part instanceof vscode.LanguageModelTextPart) {
+      if (part instanceof LanguageModelTextPart) {
         chars += part.value.length;
       }
     }

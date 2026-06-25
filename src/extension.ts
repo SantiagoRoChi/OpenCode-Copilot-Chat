@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { ExtensionContext, window, workspace, lm, commands, QuickPickItem } from 'vscode';
 import { OpenCodeFreeProvider } from './providers/OpenCodeFreeProvider';
 import { OpenCodeGoProvider } from './providers/OpenCodeGoProvider';
 import { OpenCodeZenProvider } from './providers/OpenCodeZenProvider';
@@ -36,7 +36,7 @@ let connector: OpenCodeConnector;
 let secretStorage: SecretStorage;
 let serverManager: MultiServerManager;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export async function activate(context: ExtensionContext): Promise<void> {
   console.log('+ Providers: activating...');
 
   // ── Initialize services ─────────────────────────────────────────────────
@@ -76,13 +76,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // ── OpenCode local key auto-detection ─────────────────────────────────────
 
-  connector = new OpenCodeConnector(vscode.window.createOutputChannel('OpenCode Connector'));
+  connector = new OpenCodeConnector(window.createOutputChannel('OpenCode Connector'));
   secretStorage = new SecretStorage(context);
   connector.watchAuthFile(context);
   context.subscriptions.push(connector);
 
   if (await connector.hasLocalKeys()) {
-    const choice = await vscode.window.showInformationMessage(
+    const choice = await window.showInformationMessage(
       'OpenCode local installation detected. Use local API keys?',
       'Yes', 'No'
     );
@@ -95,13 +95,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (localKeys.goKey) {
         await goProvider.setApiKey(localKeys.goKey);
       }
-      vscode.window.showInformationMessage('+ Providers: Local API keys loaded.');
+      window.showInformationMessage('+ Providers: Local API keys loaded.');
     }
   }
 
   context.subscriptions.push(
     connector.onDidChangeLocalKeys(async (newKeys) => {
-      const choice = await vscode.window.showInformationMessage(
+      const choice = await window.showInformationMessage(
         'New API keys detected in local OpenCode installation. Use them?',
         'Yes', 'No'
       );
@@ -113,7 +113,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (newKeys.goKey) {
           await goProvider.setApiKey(newKeys.goKey);
         }
-        vscode.window.showInformationMessage('+ Providers: New API keys loaded.');
+        window.showInformationMessage('+ Providers: New API keys loaded.');
         void refreshTreeView();
       }
     })
@@ -133,7 +133,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   if (lmStudioProvider.getServerList().length === 0) {
     try {
-      const lmUrl = vscode.workspace.getConfiguration('lmstudio').get<string>('baseUrl') || 'http://localhost:1234';
+      const lmUrl = workspace.getConfiguration('lmstudio').get<string>('baseUrl') || 'http://localhost:1234';
       const health = await fetch(`${lmUrl}/v1/models`, { signal: AbortSignal.timeout(3000) });
       if (health.ok) {
         lmStudioProvider.addServer('local', 'Local LM Studio', lmUrl);
@@ -151,7 +151,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   if (ollamaProvider.getServerList().length === 0) {
     try {
-      const ollamaUrl = vscode.workspace.getConfiguration('ollama').get<string>('baseUrl') || 'http://localhost:11434';
+      const ollamaUrl = workspace.getConfiguration('ollama').get<string>('baseUrl') || 'http://localhost:11434';
       const health = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
       if (health.ok) {
         ollamaProvider.addServer('local', 'Local Ollama', ollamaUrl);
@@ -165,19 +165,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // ── Register providers with VS Code LM API ────────────────────────────────
 
   context.subscriptions.push(
-    vscode.lm.registerLanguageModelChatProvider('opencode-free',   freeProvider),
-    vscode.lm.registerLanguageModelChatProvider('opencode-go',     goProvider),
-    vscode.lm.registerLanguageModelChatProvider('opencode-zen',    zenProvider),
-    vscode.lm.registerLanguageModelChatProvider('opencode-server', serverProvider),
-    vscode.lm.registerLanguageModelChatProvider('lmstudio',        lmStudioProvider),
-    vscode.lm.registerLanguageModelChatProvider('ollama-plus',     ollamaProvider),
+    lm.registerLanguageModelChatProvider('opencode-free',   freeProvider),
+    lm.registerLanguageModelChatProvider('opencode-go',     goProvider),
+    lm.registerLanguageModelChatProvider('opencode-zen',    zenProvider),
+    lm.registerLanguageModelChatProvider('opencode-server', serverProvider),
+    lm.registerLanguageModelChatProvider('lmstudio',        lmStudioProvider),
+    lm.registerLanguageModelChatProvider('ollama-plus',     ollamaProvider),
     freeProvider, goProvider, zenProvider, serverProvider, lmStudioProvider, ollamaProvider,
   );
 
   // ── Agent Window providers (for Copilot CLI / Agents Window) ──────────────
   // Register additional providers with '-agent' suffix for the Agents Window.
   // VS Code shows these in the Agents Window model picker.
-  const enableAgentWindow = vscode.workspace.getConfiguration('opencode-zen').get<boolean>('enableAgentWindow', true);
+  const enableAgentWindow = workspace.getConfiguration('opencode-zen').get<boolean>('enableAgentWindow', true);
   
   if (enableAgentWindow) {
     const agentZenProvider = new OpenCodeZenProvider(context);
@@ -190,9 +190,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await agentFreeProvider.setApiKey(freeProvider.getApiKey());
     
     context.subscriptions.push(
-      vscode.lm.registerLanguageModelChatProvider('opencode-zen-agent',    agentZenProvider),
-      vscode.lm.registerLanguageModelChatProvider('opencode-go-agent',     agentGoProvider),
-      vscode.lm.registerLanguageModelChatProvider('opencode-free-agent',   agentFreeProvider),
+      lm.registerLanguageModelChatProvider('opencode-zen-agent',    agentZenProvider),
+      lm.registerLanguageModelChatProvider('opencode-go-agent',     agentGoProvider),
+      lm.registerLanguageModelChatProvider('opencode-free-agent',   agentFreeProvider),
       agentZenProvider, agentGoProvider, agentFreeProvider,
     );
     
@@ -218,7 +218,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   OpenCodeSubagentTool.registerProvider('opencode-free', freeProvider);
   OpenCodeSubagentTool.registerProvider('opencode-go',   goProvider);
   OpenCodeSubagentTool.registerProvider('opencode-zen',  zenProvider);
-  context.subscriptions.push(vscode.lm.registerTool(OpenCodeSubagentTool.toolName, subagentTool));
+  context.subscriptions.push(lm.registerTool(OpenCodeSubagentTool.toolName, subagentTool));
 
   // ── Chat participant (@opencode) ──────────────────────────────────────────
   const chatParticipant = registerOpenCodeChatParticipant(context, [
@@ -237,14 +237,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // ── Status bar + Tree view ────────────────────────────────────────────────
 
-  statusBar = new StatusBarManager(() => ({
-    host: 'opencode',
-    connection: { state: 'ok' },
-    models: [],
-    sessionStats: { requestCount: 0, totalTokens: { prompt: 0, completion: 0, total: 0 } },
-    features: { toolCalling: true, imageInput: false, parallelToolCalling: false, agentTemperature: 0.7 },
-    now: Date.now(),
-  }));
+  statusBar = new StatusBarManager(() => {
+    const allModels = [
+      ...zenProvider.getCurrentModels(),
+      ...goProvider.getCurrentModels(),
+      ...freeProvider.getCurrentModels(),
+      ...serverProvider.getCurrentModels(),
+      ...lmStudioProvider.getCurrentModels(),
+      ...ollamaProvider.getCurrentModels(),
+    ];
+    return {
+      host: 'opencode',
+      connection: { state: allModels.length > 0 ? 'ok' : 'noModels' },
+      models: allModels.map(m => ({
+        id: m.id,
+        name: m.name,
+        contextLabel: `${m.maxInputTokens.toLocaleString()} ctx`,
+        totalContext: m.maxInputTokens,
+        capabilityLabels: [
+          ...(m.capabilities?.toolCalling ? ['tool-calling'] : []),
+          ...(m.capabilities?.imageInput ? ['vision'] : []),
+        ],
+      })),
+      sessionStats: { requestCount: 0, totalTokens: { prompt: 0, completion: 0, total: 0 } },
+      features: { toolCalling: true, imageInput: false, parallelToolCalling: false, agentTemperature: 0.7 },
+      now: Date.now(),
+    };
+  });
   statusBar.show();
   context.subscriptions.push(statusBar);
 
@@ -316,13 +335,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Refresh dashboard when models change - also update status bar
   const handleModelsChanged = () => {
     void refreshTreeView();
-    // Update status bar with current model counts
     const zenCount = zenProvider.getCurrentModels().length;
     const goCount = goProvider.getCurrentModels().length;
     const freeCount = freeProvider.getCurrentModels().length;
-    const totalModels = zenCount + goCount + freeCount;
+    const serverCount = serverProvider.getCurrentModels().length;
+    const lmCount = lmStudioProvider.getCurrentModels().length;
+    const ollamaCount = ollamaProvider.getCurrentModels().length;
+    const totalModels = zenCount + goCount + freeCount + serverCount + lmCount + ollamaCount;
     if (totalModels > 0) {
       statusBar.setIdle(totalModels);
+    } else {
+      statusBar.setNoModels();
     }
   };
 
@@ -330,28 +353,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     freeProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
     goProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
     zenProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
-    serverProvider.onDidChangeLanguageModelChatInformation(() => void refreshTreeView()),
-    lmStudioProvider.onDidChangeLanguageModelChatInformation(() => void refreshTreeView()),
-    ollamaProvider.onDidChangeLanguageModelChatInformation(() => void refreshTreeView()),
+    serverProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
+    lmStudioProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
+    ollamaProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
   );
 
   treeProvider = new OpenCodeTreeProvider();
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('opencode-zen-tree', treeProvider)
+    window.registerTreeDataProvider('opencode-zen-tree', treeProvider)
   );
 
   // ── Webview dashboard ─────────────────────────────────────────────────────
 
   webviewProvider = new OpenCodeWebviewProvider(context.extensionUri);
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(OpenCodeWebviewProvider.viewType, webviewProvider)
+    window.registerWebviewViewProvider(OpenCodeWebviewProvider.viewType, webviewProvider)
   );
 
   registerCommands(context);
 
   const connectedCount = serverManager.getConnectedList().length;
   if (connectedCount > 0) {
-    vscode.window.showInformationMessage(`+ Providers: ${connectedCount} OpenCode server(s) connected.`);
+    window.showInformationMessage(`+ Providers: ${connectedCount} OpenCode server(s) connected.`);
   }
 
   // Initial refresh with delay to allow providers to load
@@ -509,14 +532,24 @@ function buildModelFamilies(models: { id: string; name: string; family: string }
   return result;
 }
 
+interface ServerTypeQuickPickItem extends QuickPickItem {
+  value: string;
+}
+
+interface ServerQuickPickItem extends QuickPickItem {
+  id: string;
+  serverKind?: 'opencode' | 'lmstudio' | 'ollama';
+  name: string;
+}
+
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-function registerCommands(context: vscode.ExtensionContext): void {
+function registerCommands(context: ExtensionContext): void {
   const reg = (id: string, fn: (...args: any[]) => any) =>
-    context.subscriptions.push(vscode.commands.registerCommand(id, fn));
+    context.subscriptions.push(commands.registerCommand(id, fn));
 
   reg('opencode-zen.configureZen', async () => {
-    const key = await vscode.window.showInputBox({
+    const key = await window.showInputBox({
       title: 'OpenCode Zen — API Key',
       prompt: 'Enter your Zen/Free API key (opencode.ai/auth)',
       password: true, placeHolder: 'oc-...', ignoreFocusOut: true,
@@ -524,19 +557,19 @@ function registerCommands(context: vscode.ExtensionContext): void {
     if (key === undefined) return;
     await zenProvider.setApiKey(key);
     await freeProvider.setApiKey(key);
-    vscode.window.showInformationMessage(key ? 'API key saved.' : 'API key cleared.');
+    window.showInformationMessage(key ? 'API key saved.' : 'API key cleared.');
     void refreshTreeView();
   });
 
   reg('opencode-zen.configureGo', async () => {
-    const key = await vscode.window.showInputBox({
+    const key = await window.showInputBox({
       title: 'OpenCode Go — API Key',
       prompt: 'Enter your Go API key (opencode.ai/auth)',
       password: true, placeHolder: 'oc-...', ignoreFocusOut: true,
     });
     if (key === undefined) return;
     await goProvider.setApiKey(key);
-    vscode.window.showInformationMessage(key ? 'Go API key saved.' : 'Go API key cleared.');
+    window.showInformationMessage(key ? 'Go API key saved.' : 'Go API key cleared.');
     void refreshTreeView();
   });
 
@@ -545,61 +578,61 @@ function registerCommands(context: vscode.ExtensionContext): void {
     goProvider.refreshModels();
     freeProvider.refreshModels();
     serverProvider.refreshModels();
-    vscode.window.showInformationMessage('All models refreshed.');
+    window.showInformationMessage('All models refreshed.');
     void refreshTreeView();
   });
 
   reg('opencode-zen.refreshServers', async () => {
     await serverManager.connectAll();
     syncServerProviderFromManager();
-    vscode.window.showInformationMessage('Servers refreshed.');
+    window.showInformationMessage('Servers refreshed.');
     void refreshTreeView();
   });
 
   // ── Add Server ────────────────────────────────────────────────────────────
 
   reg('opencode-zen.addServer', async () => {
-    const serverType = await vscode.window.showQuickPick([
+    const serverType = await window.showQuickPick<ServerTypeQuickPickItem>([
       { label: '$(server) OpenCode Server', value: 'opencode' },
       { label: '$(chip) LM Studio',          value: 'lmstudio' },
       { label: '$(zap) Ollama',               value: 'ollama' },
     ], { placeHolder: 'Select server type', ignoreFocusOut: true });
     if (!serverType) return;
 
-    if ((serverType as any).value === 'lmstudio') {
-      const name = await vscode.window.showInputBox({ title: 'LM Studio Name', value: 'Local LM Studio', ignoreFocusOut: true });
+    if (serverType.value === 'lmstudio') {
+      const name = await window.showInputBox({ title: 'LM Studio Name', value: 'Local LM Studio', ignoreFocusOut: true });
       if (name === undefined) return;
-      const url  = await vscode.window.showInputBox({ title: 'LM Studio URL',  value: 'http://localhost:1234', ignoreFocusOut: true });
+      const url  = await window.showInputBox({ title: 'LM Studio URL',  value: 'http://localhost:1234', ignoreFocusOut: true });
       if (url === undefined) return;
       lmStudioProvider.addServer(`lmstudio-${randomUUID().slice(0, 8)}`, name, url);
-      vscode.window.showInformationMessage(`LM Studio "${name}" added.`);
+      window.showInformationMessage(`LM Studio "${name}" added.`);
       void refreshTreeView();
       return;
     }
 
-    if ((serverType as any).value === 'ollama') {
-      const name = await vscode.window.showInputBox({ title: 'Ollama Name', value: 'Local Ollama', ignoreFocusOut: true });
+    if (serverType.value === 'ollama') {
+      const name = await window.showInputBox({ title: 'Ollama Name', value: 'Local Ollama', ignoreFocusOut: true });
       if (name === undefined) return;
-      const url  = await vscode.window.showInputBox({ title: 'Ollama URL',  value: 'http://localhost:11434', ignoreFocusOut: true });
+      const url  = await window.showInputBox({ title: 'Ollama URL',  value: 'http://localhost:11434', ignoreFocusOut: true });
       if (url === undefined) return;
       ollamaProvider.addServer(`ollama-${randomUUID().slice(0, 8)}`, name, url);
-      vscode.window.showInformationMessage(`Ollama "${name}" added.`);
+      window.showInformationMessage(`Ollama "${name}" added.`);
       void refreshTreeView();
       return;
     }
 
     // OpenCode Server
-    const name    = await vscode.window.showInputBox({ title: 'Server Name', placeHolder: 'My OpenCode Server', ignoreFocusOut: true });
+    const name    = await window.showInputBox({ title: 'Server Name', placeHolder: 'My OpenCode Server', ignoreFocusOut: true });
     if (name === undefined) return;
-    const url     = await vscode.window.showInputBox({ title: 'Server URL', placeHolder: 'http://127.0.0.1', ignoreFocusOut: true });
+    const url     = await window.showInputBox({ title: 'Server URL', placeHolder: 'http://127.0.0.1', ignoreFocusOut: true });
     if (url === undefined) return;
-    const portStr = await vscode.window.showInputBox({ title: 'Port', placeHolder: '4096', ignoreFocusOut: true });
+    const portStr = await window.showInputBox({ title: 'Port', placeHolder: '4096', ignoreFocusOut: true });
     if (portStr === undefined) return;
     const port    = parseInt(portStr, 10) || 4096;
-    const username = await vscode.window.showInputBox({ title: 'Username (optional)', ignoreFocusOut: true }) ?? '';
+    const username = await window.showInputBox({ title: 'Username (optional)', ignoreFocusOut: true }) ?? '';
     let password = '';
     if (username) {
-      password = await vscode.window.showInputBox({ title: 'Password', password: true, ignoreFocusOut: true }) ?? '';
+      password = await window.showInputBox({ title: 'Password', password: true, ignoreFocusOut: true }) ?? '';
     }
 
     const newConfig = {
@@ -615,7 +648,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     await serverManager.connectAll();
     syncServerProviderFromManager();
-    vscode.window.showInformationMessage(`Server "${name}" added.`);
+    window.showInformationMessage(`Server "${name}" added.`);
     void refreshTreeView();
   });
 
@@ -624,24 +657,24 @@ function registerCommands(context: vscode.ExtensionContext): void {
   reg('opencode-zen.editServer', async (_: unknown, serverId?: string) => {
     if (!serverId) {
       const servers = await secretStorage.getServerConfigs();
-      if (!servers.length) { vscode.window.showInformationMessage('No servers configured.'); return; }
-      const pick = await vscode.window.showQuickPick(servers.map(s => ({ label: s.name, id: s.id })), { placeHolder: 'Select server' });
+      if (!servers.length) { window.showInformationMessage('No servers configured.'); return; }
+      const pick = await window.showQuickPick<{ label: string; id: string }>(servers.map(s => ({ label: s.name, id: s.id })), { placeHolder: 'Select server' });
       if (!pick) return;
-      serverId = (pick as any).id;
+      serverId = pick.id;
     }
     const configs = await secretStorage.getServerConfigs();
     const config = configs.find(c => c.id === serverId);
     if (!config) return;
 
-    const name    = await vscode.window.showInputBox({ title: 'Server Name', value: config.name, ignoreFocusOut: true });
+    const name    = await window.showInputBox({ title: 'Server Name', value: config.name, ignoreFocusOut: true });
     if (name === undefined) return;
-    const url     = await vscode.window.showInputBox({ title: 'Server URL', value: config.url, ignoreFocusOut: true });
+    const url     = await window.showInputBox({ title: 'Server URL', value: config.url, ignoreFocusOut: true });
     if (url === undefined) return;
-    const portStr = await vscode.window.showInputBox({ title: 'Port', value: String(config.port), ignoreFocusOut: true });
+    const portStr = await window.showInputBox({ title: 'Port', value: String(config.port), ignoreFocusOut: true });
     if (portStr === undefined) return;
-    const username = await vscode.window.showInputBox({ title: 'Username (optional)', value: config.username ?? '', ignoreFocusOut: true }) ?? '';
+    const username = await window.showInputBox({ title: 'Username (optional)', value: config.username ?? '', ignoreFocusOut: true }) ?? '';
     const currentPwd = config.hasPassword ? await secretStorage.getServerPassword(serverId!) : '';
-    const pwd = await vscode.window.showInputBox({ title: 'Password (empty = keep current)', password: true, value: currentPwd, ignoreFocusOut: true });
+    const pwd = await window.showInputBox({ title: 'Password (empty = keep current)', password: true, value: currentPwd, ignoreFocusOut: true });
     if (pwd === undefined) return;
 
     config.name = name; config.url = url; config.port = parseInt(portStr, 10) || 4096;
@@ -652,7 +685,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     await serverManager.connectAll();
     syncServerProviderFromManager();
-    vscode.window.showInformationMessage(`Server "${name}" updated.`);
+    window.showInformationMessage(`Server "${name}" updated.`);
     void refreshTreeView();
   });
 
@@ -667,13 +700,13 @@ function registerCommands(context: vscode.ExtensionContext): void {
         ...opencode.map(s => ({ label: `${s.name} (OpenCode)`, id: s.id, serverKind: 'opencode' as const, name: s.name })),
         ...local.map(s => ({ label: `${s.name} (${s.kind === 'lmstudio' ? 'LM Studio' : 'Ollama'})`, id: s.id, serverKind: s.kind, name: s.name })),
       ];
-      if (!all.length) { vscode.window.showInformationMessage('No servers configured.'); return; }
-      const pick = await vscode.window.showQuickPick(all, { placeHolder: 'Select server to remove' });
+      if (!all.length) { window.showInformationMessage('No servers configured.'); return; }
+      const pick = await window.showQuickPick<{ label: string; id: string; serverKind: 'opencode' | 'lmstudio' | 'ollama'; name: string }>(all, { placeHolder: 'Select server to remove' });
       if (!pick) return;
-      serverId = (pick as any).id;
-      const kind = (pick as any).serverKind as 'opencode' | 'lmstudio' | 'ollama';
-      const name = (pick as any).name as string;
-      const confirm = await vscode.window.showWarningMessage(`Remove "${name}"?`, 'Remove', 'Cancel');
+      serverId = pick.id;
+      const kind = pick.serverKind;
+      const name = pick.name;
+      const confirm = await window.showWarningMessage(`Remove "${name}"?`, 'Remove', 'Cancel');
       if (confirm !== 'Remove') return;
 
       if (kind === 'opencode') {
@@ -688,7 +721,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
         const configs = await secretStorage.getLocalServerConfigs();
         await secretStorage.setLocalServerConfigs(configs.filter(c => c.id !== serverId));
       }
-      vscode.window.showInformationMessage(`Server "${name}" removed.`);
+      window.showInformationMessage(`Server "${name}" removed.`);
       void refreshTreeView();
       return;
     }
@@ -698,29 +731,29 @@ function registerCommands(context: vscode.ExtensionContext): void {
     const opencodeConfigs = await secretStorage.getServerConfigs();
     const opencodeMatch = opencodeConfigs.find(c => c.id === serverId);
     if (opencodeMatch) {
-      const confirm = await vscode.window.showWarningMessage(`Remove "${opencodeMatch.name}"?`, 'Remove', 'Cancel');
+      const confirm = await window.showWarningMessage(`Remove "${opencodeMatch.name}"?`, 'Remove', 'Cancel');
       if (confirm !== 'Remove') return;
       await secretStorage.setServerConfigs(opencodeConfigs.filter(c => c.id !== serverId));
       await secretStorage.setServerPassword(serverId!, '');
       serverProvider.removeServer(serverId!);
       await serverManager.connectAll();
-      vscode.window.showInformationMessage(`Server "${opencodeMatch.name}" removed.`);
+      window.showInformationMessage(`Server "${opencodeMatch.name}" removed.`);
       void refreshTreeView();
       return;
     }
     const localConfigs = await secretStorage.getLocalServerConfigs();
     const localMatch = localConfigs.find(c => c.id === serverId);
     if (localMatch) {
-      const confirm = await vscode.window.showWarningMessage(`Remove "${localMatch.name}"?`, 'Remove', 'Cancel');
+      const confirm = await window.showWarningMessage(`Remove "${localMatch.name}"?`, 'Remove', 'Cancel');
       if (confirm !== 'Remove') return;
       if (localMatch.kind === 'lmstudio') lmStudioProvider.removeServer(serverId!);
       else ollamaProvider.removeServer(serverId!);
       await secretStorage.setLocalServerConfigs(localConfigs.filter(c => c.id !== serverId));
-      vscode.window.showInformationMessage(`Server "${localMatch.name}" removed.`);
+      window.showInformationMessage(`Server "${localMatch.name}" removed.`);
       void refreshTreeView();
       return;
     }
-    vscode.window.showInformationMessage('Server not found.');
+    window.showInformationMessage('Server not found.');
   });
 
   // ── Launch Server ─────────────────────────────────────────────────────────
@@ -729,16 +762,16 @@ function registerCommands(context: vscode.ExtensionContext): void {
     if (!serverId) {
       const configs = await secretStorage.getServerConfigs();
       const offline = configs.filter(c => !serverManager.getConnectedList().some(s => s.config.id === c.id));
-      if (!offline.length) { vscode.window.showInformationMessage('All servers online or none configured.'); return; }
-      const pick = await vscode.window.showQuickPick(offline.map(s => ({ label: s.name, id: s.id })), { placeHolder: 'Select server to launch' });
+      if (!offline.length) { window.showInformationMessage('All servers online or none configured.'); return; }
+      const pick = await window.showQuickPick<{ label: string; id: string }>(offline.map(s => ({ label: s.name, id: s.id })), { placeHolder: 'Select server to launch' });
       if (!pick) return;
-      serverId = (pick as any).id;
+      serverId = pick.id;
     }
     const configs = await secretStorage.getServerConfigs();
     const config = configs.find(c => c.id === serverId);
     if (!config) return;
 
-    const mode = await vscode.window.showQuickPick([
+    const mode = await window.showQuickPick([
       { label: 'Background process' },
       { label: 'VS Code terminal' },
     ], { placeHolder: `Launch "${config.name}"` });
@@ -746,7 +779,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     if (mode.label === 'VS Code terminal') {
       const host = config.url.replace(/^https?:\/\//, '');
-      const terminal = vscode.window.createTerminal({ name: config.name });
+      const terminal = window.createTerminal({ name: config.name });
       terminal.sendText(`opencode serve --host ${host} --port ${config.port}`);
       terminal.show();
       for (let i = 0; i < 15; i++) {
@@ -758,11 +791,11 @@ function registerCommands(context: vscode.ExtensionContext): void {
           return;
         }
       }
-      vscode.window.showWarningMessage(`Could not connect to "${config.name}". Check the terminal.`);
+      window.showWarningMessage(`Could not connect to "${config.name}". Check the terminal.`);
     } else {
       const ok = await serverManager.launchServer(config);
       if (ok) { syncServerProviderFromManager(); void refreshTreeView(); }
-      vscode.window.showInformationMessage(ok
+      window.showInformationMessage(ok
         ? `Server "${config.name}" launched.`
         : `Could not launch "${config.name}". Is opencode in your PATH?`
       );
@@ -772,13 +805,13 @@ function registerCommands(context: vscode.ExtensionContext): void {
   // ── Clear usage ───────────────────────────────────────────────────────────
   reg('opencode-zen.clearUsage', () => {
     usageTracker.clear();
-    vscode.window.showInformationMessage('Usage stats cleared.');
+    window.showInformationMessage('Usage stats cleared.');
     void refreshTreeView();
   });
 
   // ── Show output ───────────────────────────────────────────────────────────
   reg('opencode-zen.showOutput', () => {
-    vscode.window.showInformationMessage('Use the Output panel and select a provider channel.');
+    window.showInformationMessage('Use the Output panel and select a provider channel.');
   });
 
   // ── Show usage stats ──────────────────────────────────────────────────────
@@ -788,7 +821,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     const output = formatUsageOutput(stats);
     
     // Create or reuse output channel
-    const usageChannel = vscode.window.createOutputChannel('OpenCode Usage');
+    const usageChannel = window.createOutputChannel('OpenCode Usage');
     usageChannel.clear();
     usageChannel.appendLine(output);
     usageChannel.show();
@@ -825,8 +858,8 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
   // ── Show output log ───────────────────────────────────────────────────────
   reg('opencode-zen.showOutputLog', () => {
-    vscode.commands.executeCommand('workbench.action.output.toggleOutput');
-    vscode.window.showInformationMessage('Select "OpenCode" from the output channel list.');
+    commands.executeCommand('workbench.action.output.toggleOutput');
+    window.showInformationMessage('Select "OpenCode" from the output channel list.');
   });
 
   // ── Refresh global usage ──────────────────────────────────────────────────
@@ -834,7 +867,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     const stats = usageTracker.getStats();
     statusBar.updateUsage(stats);
     void refreshTreeView();
-    vscode.window.showInformationMessage('Global usage refreshed.');
+    window.showInformationMessage('Global usage refreshed.');
   });
 }
 

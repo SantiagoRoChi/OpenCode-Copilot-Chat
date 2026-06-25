@@ -1,5 +1,5 @@
-import * as vscode from 'vscode';
-import * as https from 'https';
+import { EventEmitter } from 'vscode';
+import { request as httpsRequest, RequestOptions } from 'https';
 import { OpenCodeAuthService } from './openCodeAuthService';
 
 /**
@@ -47,7 +47,7 @@ export class OpenCodeUsageService {
   private readonly authService: OpenCodeAuthService;
   private usageData: UsageData | null = null;
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
-  private readonly _onDidChangeUsage = new vscode.EventEmitter<UsageData>();
+  private readonly _onDidChangeUsage = new EventEmitter<UsageData>();
   readonly onDidChangeUsage = this._onDidChangeUsage.event;
 
   private constructor() {
@@ -141,7 +141,7 @@ export class OpenCodeUsageService {
    */
   private async discoverWorkspaceId(apiKey: string): Promise<string | null> {
     return new Promise((resolve) => {
-      const options: https.RequestOptions = {
+      const options: RequestOptions = {
         hostname: 'opencode.ai',
         path: '/workspace',
         method: 'GET',
@@ -151,7 +151,7 @@ export class OpenCodeUsageService {
         },
       };
 
-      const req = https.request(options, (res) => {
+      const req = httpsRequest(options, (res) => {
         let data = '';
         
         res.on('data', (chunk) => {
@@ -203,7 +203,7 @@ export class OpenCodeUsageService {
     const url = `/_server?id=${serverId}&args=${encodedArgs}`;
 
     return new Promise((resolve, reject) => {
-      const options: https.RequestOptions = {
+      const options: RequestOptions = {
         hostname: 'opencode.ai',
         path: url,
         method: 'GET',
@@ -219,7 +219,7 @@ export class OpenCodeUsageService {
         },
       };
 
-      const req = https.request(options, (res) => {
+      const req = httpsRequest(options, (res) => {
         let data = '';
         
         res.on('data', (chunk) => {
@@ -252,7 +252,7 @@ export class OpenCodeUsageService {
    */
   private async discoverServerId(workspaceId: string, apiKey: string): Promise<string | null> {
     return new Promise((resolve) => {
-      const options: https.RequestOptions = {
+      const options: RequestOptions = {
         hostname: 'opencode.ai',
         path: `/workspace/${workspaceId}/go`,
         method: 'GET',
@@ -262,7 +262,7 @@ export class OpenCodeUsageService {
         },
       };
 
-      const req = https.request(options, (res) => {
+      const req = httpsRequest(options, (res) => {
         let data = '';
         
         res.on('data', (chunk) => {

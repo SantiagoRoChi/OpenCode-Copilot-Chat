@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { window, ExtensionContext, CancellationToken, LanguageModelChatInformation, LanguageModelChatRequestMessage, LanguageModelChatTool, LanguageModelResponsePart, Progress, ProvideLanguageModelChatResponseOptions } from 'vscode';
 import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { GO_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
@@ -21,12 +21,12 @@ interface ApiModel {
 export class OpenCodeGoProvider extends BaseProvider {
   private apiKey = '';
   private readonly storage: SecretStorage;
-  private readonly out = vscode.window.createOutputChannel('OpenCode Go');
+  private readonly out = window.createOutputChannel('OpenCode Go');
   private onUsageCallback?: (usage: { prompt: number; completion: number; total: number }) => void;
 
   get vendor(): string { return 'opencode-go'; }
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: ExtensionContext) {
     super();
     this.storage = new SecretStorage(context);
   }
@@ -48,38 +48,40 @@ export class OpenCodeGoProvider extends BaseProvider {
 
   getApiKey(): string { return this.apiKey; }
 
-  /**
-   * Routes each chat request to the correct AI SDK based on the model's API format.
-   * The API key is passed fresh to the SDK on every call — no stale cache.
-   */
   override async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatRequestMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
+    model: LanguageModelChatInformation,
+    messages: readonly LanguageModelChatRequestMessage[],
+    options: ProvideLanguageModelChatResponseOptions,
+    progress: Progress<LanguageModelResponsePart>,
+    token: CancellationToken
   ): Promise<void> {
-    const rm = model as RoutedModelInfo;
+    const rm = model as RoutedModelInfo; // safe: RoutedModelInfo extends LanguageModelChatInformation with routing data embedded
     const apiKey = this.apiKey;
     if (!apiKey) {
       throw new Error('Go API key not configured. Use "OpenCode Zen: Configure Go Key".');
     }
 
-    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+    const tools = (options as unknown as { tools?: LanguageModelChatTool[] }).tools;
     
-    // Extract model options including user configuration from the UI
     const modelOpts = this.extractModelOptions(options);
+
+    const handleUsage = (usage: AnthropicTokenUsage | OpenAITokenUsage) => {
+      if (this.onUsageCallback) {
+        this.onUsageCallback(usage);
+      }
+    };
 
     if (rm._apiFormat === 'anthropic') {
       await streamAnthropicChat(
         apiKey, `${GO_BASE_URL}`, rm._apiId,
         rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+        handleUsage,
       );
     } else {
-      // openai or openai-compatible
       await streamOpenAIChat(
         apiKey, `${GO_BASE_URL}`, rm._apiId,
         rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
+        handleUsage,
       );
     }
     this.out.appendLine(`[Go] ✅ ${rm._apiId} responded`);
@@ -87,8 +89,8 @@ export class OpenCodeGoProvider extends BaseProvider {
 
   override async provideLanguageModelChatInformation(
     options: { silent: boolean; configuration?: Record<string, unknown> },
-    token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelChatInformation[]> {
+    token: CancellationToken
+  ): Promise<LanguageModelChatInformation[]> {
     const configKey = options.configuration?.apiKey as string | undefined;
     if (configKey && configKey !== this.apiKey) await this.setApiKey(configKey);
     return super.provideLanguageModelChatInformation(options, token);
@@ -105,7 +107,7 @@ export class OpenCodeGoProvider extends BaseProvider {
       if (!res.ok) return [];
       const data = await res.json() as { data: ApiModel[] };
       this.out.appendLine(`[Go] ${data.data?.length ?? 0} models`);
-      return (data.data ?? []).map(m => this.toModelInfo(m.id));
+      return this.buildUtilityAliases((data.data ?? []).map(m => this.toModelInfo(m.id)));
     } catch (err) {
       this.out.appendLine(`[Go] error: ${err}`);
       return [];
@@ -133,12 +135,37 @@ export class OpenCodeGoProvider extends BaseProvider {
         currency: 'USD',
       } : undefined,
     };
-    // Build configuration schema based on model capabilities
     info.configurationSchema = this.buildConfigurationSchema(
-      caps.supportedReasoningLevels
+      caps.supportedReasoningLevels,
+      undefined,
+      caps.family,
+      caps.maxInputTokens
     );
 
     return info;
+  }
+
+  private buildUtilityAliases(models: RoutedModelInfo[]): RoutedModelInfo[] {
+    if (models.length === 0) return models;
+    const sortedByPrice = [...models].filter(m => m._pricing?.inputTokenPrice != null)
+      .sort((a, b) => a._pricing!.inputTokenPrice! - b._pricing!.inputTokenPrice!);
+    const sortedBySpeed = [...models].sort(
+      (a, b) => (a.maxInputTokens ?? Infinity) - (b.maxInputTokens ?? Infinity)
+    );
+    const result = [...models];
+    if (sortedByPrice.length > 0) {
+      const cheapest = sortedByPrice[0];
+      result.push(this.buildAliasModel('opencode-cheap-go', 'Cheap (Go)', cheapest));
+    }
+    if (sortedBySpeed.length > 0) {
+      const fastest = sortedBySpeed[0];
+      result.push(this.buildAliasModel('opencode-fast-go', 'Fast (Go)', fastest));
+    }
+    return result;
+  }
+
+  private buildAliasModel(id: string, name: string, target: RoutedModelInfo): RoutedModelInfo {
+    return { ...target, id, name };
   }
 
   override dispose(): void {
@@ -146,4 +173,3 @@ export class OpenCodeGoProvider extends BaseProvider {
     super.dispose();
   }
 }
-

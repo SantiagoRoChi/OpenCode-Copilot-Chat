@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { commands, Uri, WebviewView, WebviewViewProvider } from 'vscode';
 
 export interface ServerData {
   id: string;
@@ -28,12 +28,12 @@ export interface DashboardState {
   };
 }
 
-export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
+export class OpenCodeWebviewProvider implements WebviewViewProvider {
   public static readonly viewType = 'opencode-zen-dashboard';
-  private view?: vscode.WebviewView;
+  private view?: WebviewView;
   private state: DashboardState;
 
-  constructor(private readonly extensionUri: vscode.Uri) {
+  constructor(private readonly extensionUri: Uri) {
     // Initialize with empty state so webview shows something immediately
     this.state = {
       servers: [],
@@ -46,7 +46,7 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
     };
   }
 
-  resolveWebviewView(webviewView: vscode.WebviewView): void {
+  resolveWebviewView(webviewView: WebviewView): void {
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
@@ -61,10 +61,10 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((message: any) => {
       switch (message.command) {
         case 'configureZen':
-          vscode.commands.executeCommand('opencode-zen.configureZen');
+          commands.executeCommand('opencode-zen.configureZen');
           break;
         case 'configureGo':
-          vscode.commands.executeCommand('opencode-zen.configureGo');
+          commands.executeCommand('opencode-zen.configureGo');
           break;
       }
     });
@@ -94,7 +94,7 @@ export class OpenCodeWebviewProvider implements vscode.WebviewViewProvider {
       this.view.show(true);
     } else {
       // If view not ready, try to open it via command
-      vscode.commands.executeCommand('opencode-zen-dashboard.focus');
+      commands.executeCommand('opencode-zen-dashboard.focus');
     }
   }
 

@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { window, LanguageModelChatInformation, LanguageModelChatRequestMessage, ProvideLanguageModelChatResponseOptions, Progress, LanguageModelResponsePart, CancellationToken, LanguageModelChatTool } from 'vscode';
 import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { ServerApiClient } from '../client/multiServerManager';
 import { getModelCapabilities } from '../client/modelRegistry';
@@ -13,7 +13,7 @@ interface ServerEntry {
 
 export class OpenCodeServerProvider extends BaseProvider {
   private readonly servers = new Map<string, ServerEntry>();
-  private readonly out = vscode.window.createOutputChannel('OpenCode Servers');
+  private readonly out = window.createOutputChannel('OpenCode Servers');
 
   get vendor(): string { return 'opencode-server'; }
 
@@ -36,34 +36,55 @@ export class OpenCodeServerProvider extends BaseProvider {
    * Builds fresh auth headers via the client on every call.
    */
   override async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatRequestMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
+    model: LanguageModelChatInformation,
+    messages: readonly LanguageModelChatRequestMessage[],
+    options: ProvideLanguageModelChatResponseOptions,
+    progress: Progress<LanguageModelResponsePart>,
+    token: CancellationToken
   ): Promise<void> {
-    const rm = model as RoutedModelInfo;
-    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+    const rm = model as RoutedModelInfo; // safe: routing data embedded at construction
+    const tools = (options as unknown as { tools?: LanguageModelChatTool[] }).tools;
 
     // OpenCode Server uses OpenAI-compatible API
-    const baseUrl = rm._url.replace(/\/v1\/chat\/completions$/, '');
+    // Clean the base URL - remove the chat completions path if present
+    let baseUrl = rm._url;
+    if (baseUrl.includes('/v1/chat/completions')) {
+      baseUrl = baseUrl.replace(/\/v1\/chat\/completions$/, '');
+    } else if (baseUrl.includes('/chat/completions')) {
+      baseUrl = baseUrl.replace(/\/chat\/completions$/, '');
+    }
+    
     const apiKey = rm._headers['Authorization']?.replace('Bearer ', '') ?? '';
 
-    await streamOpenAIChat(
-      apiKey,
-      baseUrl,
-      rm._apiId,
-      rm.maxOutputTokens,
-      messages,
-      tools,
-      options.modelOptions ?? {},
-      progress,
-      token,
-    );
+    this.out.appendLine(`[Server] Requesting ${rm._apiId} at ${baseUrl}`);
+
+    try {
+      await streamOpenAIChat(
+        apiKey,
+        baseUrl,
+        rm._apiId,
+        rm.maxOutputTokens,
+        messages,
+        tools,
+        options.modelOptions ?? {},
+        progress,
+        token,
+      );
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.out.appendLine(`[Server] Error for ${rm._apiId}: ${errorMsg}`);
+      
+      // Provide more helpful error message
+      if (errorMsg.includes('Not Found') || errorMsg.includes('404')) {
+        throw new Error(`Model "${rm._apiId}" not found on server. The model may not be available or the server configuration is incorrect.`);
+      }
+      throw err;
+    }
   }
 
   protected async getModels(): Promise<RoutedModelInfo[]> {
     const all: RoutedModelInfo[] = [];
+    const seen = new Set<string>(); // Track seen model IDs to avoid duplicates
 
     for (const [serverId, entry] of this.servers) {
       try {
@@ -77,13 +98,20 @@ export class OpenCodeServerProvider extends BaseProvider {
         for (const provider of providers.all ?? []) {
           if (!(provider.connected || connected.includes(provider.id))) continue;
 
-          for (const [modelId, modelData] of Object.entries(provider.models ?? {}) as [string, any][]) {
+          for (const [modelId, modelData] of Object.entries(provider.models ?? {})) {
+            const data = modelData as Record<string, unknown> | undefined;
+            // Create unique ID to prevent duplicates across servers
             const uniqueId = `${serverId}:${modelId}`;
-            const isRich = typeof modelData === 'object' && modelData !== null;
+            
+            // Skip if we've already seen this model
+            if (seen.has(uniqueId)) continue;
+            seen.add(uniqueId);
+            
+            const isRich = typeof data === 'object' && data !== null;
             const caps = getModelCapabilities(modelId);
-            const maxInput: number  = (isRich && modelData.maxTokens)      ?? caps.maxInputTokens;
-            const maxOutput: number = (isRich && modelData.maxOutputTokens) ?? caps.maxOutputTokens;
-            const name: string      = (isRich && modelData.name)            ?? caps.name;
+            const maxInput: number  = isRich ? (data!['maxTokens'] as number)      : caps.maxInputTokens;
+            const maxOutput: number = isRich ? (data!['maxOutputTokens'] as number) : caps.maxOutputTokens;
+            const name: string      = isRich ? (data!['name'] as string)            : caps.name;
 
             const headers = entry.client.buildHeaders();
             const { 'Content-Type': _ct, ...authHeaders } = headers;
@@ -92,12 +120,12 @@ export class OpenCodeServerProvider extends BaseProvider {
               id: uniqueId,
               name: `${name} (${entry.name})`,
               family: provider.name,
-              version: (isRich && modelData.version) ?? '1',
+              version: isRich ? (data!['version'] as string) : '1',
               maxInputTokens: maxInput,
               maxOutputTokens: maxOutput,
               capabilities: {
-                toolCalling: (isRich && modelData.toolCalling) ?? caps.toolCalling,
-                imageInput:  (isRich && modelData.vision)      ?? caps.imageInput,
+                toolCalling: (isRich && data!['toolCalling'] as boolean) ?? caps.toolCalling,
+                imageInput:  (isRich && data!['vision'] as boolean)      ?? caps.imageInput,
               },
               _url: `${entry.baseUrl}/v1/chat/completions`,
               _headers: authHeaders,

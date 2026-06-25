@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { window, LanguageModelChatInformation, LanguageModelChatRequestMessage, ProvideLanguageModelChatResponseOptions, Progress, LanguageModelResponsePart, CancellationToken, LanguageModelChatTool } from 'vscode';
 import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { SecretStorage } from '../config/secretStorage';
 import { ServerData } from '../webview/openCodeWebviewProvider';
@@ -28,7 +28,7 @@ interface ServerEntry {
 export class OllamaProvider extends BaseProvider {
   private readonly servers = new Map<string, ServerEntry>();
   private readonly showCache = new Map<string, RoutedModelInfo>();
-  private readonly out = vscode.window.createOutputChannel('Ollama');
+  private readonly out = window.createOutputChannel('Ollama');
   private readonly storage?: SecretStorage;
 
   constructor(storage?: SecretStorage) {
@@ -96,14 +96,14 @@ export class OllamaProvider extends BaseProvider {
    * Stream chat via Ollama using the OpenAI SDK.
    */
   override async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatRequestMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
+    model: LanguageModelChatInformation,
+    messages: readonly LanguageModelChatRequestMessage[],
+    options: ProvideLanguageModelChatResponseOptions,
+    progress: Progress<LanguageModelResponsePart>,
+    token: CancellationToken
   ): Promise<void> {
-    const rm = model as RoutedModelInfo;
-    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+    const rm = model as RoutedModelInfo; // safe: routing data embedded at construction
+    const tools = (options as unknown as { tools?: LanguageModelChatTool[] }).tools;
 
     // Ollama uses OpenAI-compatible API at /v1/chat/completions
     const baseUrl = rm._url.replace(/\/v1\/chat\/completions$/, '');
@@ -197,7 +197,7 @@ export class OllamaProvider extends BaseProvider {
     };
 
     if (supportsReasoning) {
-      info.configurationSchema = this.buildConfigurationSchema(['low', 'medium', 'high']);
+      info.configurationSchema = this.buildConfigurationSchema(['low', 'medium', 'high'], undefined, arch || displayName, maxInput);
     }
 
     return info;

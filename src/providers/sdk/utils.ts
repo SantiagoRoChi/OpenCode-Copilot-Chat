@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { LanguageModelChatTool, LanguageModelChatRequestMessage, LanguageModelToolCallPart, LanguageModelTextPart, LanguageModelToolResultPart } from 'vscode';
 import { jsonSchema } from '@ai-sdk/provider-utils';
 
 /**
@@ -10,7 +10,7 @@ import { jsonSchema } from '@ai-sdk/provider-utils';
  * Returns a record mapping tool names to SDK tool definitions.
  */
 export function buildSdkTools(
-  tools: vscode.LanguageModelChatTool[] | undefined,
+  tools: LanguageModelChatTool[] | undefined,
   toolFactory: (config: {
     description: string;
     inputSchema: any;
@@ -46,12 +46,12 @@ export function mapModelOptions(opts: Record<string, unknown>): Record<string, u
  * Returns a map of callId -> toolName.
  */
 export function trackToolNames(
-  messages: readonly vscode.LanguageModelChatRequestMessage[]
+  messages: readonly LanguageModelChatRequestMessage[]
 ): Map<string, string> {
   const toolNameByCallId = new Map<string, string>();
   for (const msg of messages) {
     for (const part of msg.content) {
-      if (part instanceof vscode.LanguageModelToolCallPart) {
+      if (part instanceof LanguageModelToolCallPart) {
         toolNameByCallId.set(part.callId, part.name);
       }
     }
@@ -64,18 +64,18 @@ export function trackToolNames(
  * This handles text parts, tool calls, and tool results.
  */
 export function convertMessages(
-  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  messages: readonly LanguageModelChatRequestMessage[],
 ): Array<{ role: string; content: any }> {
   const result: Array<{ role: string; content: any }> = [];
   const toolNameByCallId = trackToolNames(messages);
 
   for (const msg of messages) {
-    const isAssistant = msg.role === vscode.LanguageModelChatMessageRole.Assistant;
-    const isSystem = msg.role === (vscode as any).LanguageModelChatMessageRole.System;
+    const isAssistant = msg.role === 1;
+    const isSystem = msg.role === 2;
 
     if (isSystem) {
       const text = msg.content
-        .filter((p): p is vscode.LanguageModelTextPart => p instanceof vscode.LanguageModelTextPart)
+        .filter((p): p is LanguageModelTextPart => p instanceof LanguageModelTextPart)
         .map(p => p.value)
         .join('\n\n');
       result.push({ role: 'system', content: text });
@@ -83,16 +83,16 @@ export function convertMessages(
     }
 
     const role = isAssistant ? 'assistant' : 'user';
-    const textParts: vscode.LanguageModelTextPart[] = [];
-    const toolCallParts: vscode.LanguageModelToolCallPart[] = [];
-    const toolResultParts: vscode.LanguageModelToolResultPart[] = [];
+    const textParts: LanguageModelTextPart[] = [];
+    const toolCallParts: LanguageModelToolCallPart[] = [];
+    const toolResultParts: LanguageModelToolResultPart[] = [];
 
     for (const part of msg.content) {
-      if (part instanceof vscode.LanguageModelTextPart) {
+      if (part instanceof LanguageModelTextPart) {
         textParts.push(part);
-      } else if (part instanceof vscode.LanguageModelToolCallPart) {
+      } else if (part instanceof LanguageModelToolCallPart) {
         toolCallParts.push(part);
-      } else if (part instanceof vscode.LanguageModelToolResultPart) {
+      } else if (part instanceof LanguageModelToolResultPart) {
         toolResultParts.push(part);
       }
     }
@@ -117,7 +117,7 @@ export function convertMessages(
     const toolResults: any[] = [];
     for (const tr of toolResultParts) {
       const text = tr.content
-        .filter((p): p is vscode.LanguageModelTextPart => p instanceof vscode.LanguageModelTextPart)
+        .filter((p): p is LanguageModelTextPart => p instanceof LanguageModelTextPart)
         .map(p => p.value)
         .join('');
       const toolName = toolNameByCallId.get(tr.callId) ?? 'unknown';

@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { LanguageModelTool, LanguageModelToolInvocationPrepareOptions, CancellationToken, PreparedToolInvocation, LanguageModelToolInvocationOptions, LanguageModelToolResult, LanguageModelChatProvider, LanguageModelChatInformation, LanguageModelTextPart, LanguageModelChatMessage, LanguageModelChatToolMode, MarkdownString } from 'vscode';
 
 /**
  * OpenCode Subagent Tool
@@ -22,15 +22,15 @@ export interface SubagentParams {
 
 interface ProviderEntry {
   vendor: string;
-  provider: vscode.LanguageModelChatProvider;
+  provider: LanguageModelChatProvider;
 }
 
-export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentParams> {
+export class OpenCodeSubagentTool implements LanguageModelTool<SubagentParams> {
   public static readonly toolName = 'opencode_subagent';
-  private static providerLookup: Map<string, vscode.LanguageModelChatProvider> = new Map();
+  private static providerLookup: Map<string, LanguageModelChatProvider> = new Map();
 
   /** Register a provider so the subagent can find it */
-  static registerProvider(vendor: string, provider: vscode.LanguageModelChatProvider): void {
+  static registerProvider(vendor: string, provider: LanguageModelChatProvider): void {
     OpenCodeSubagentTool.providerLookup.set(vendor, provider);
   }
 
@@ -46,43 +46,43 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
   }
 
   async prepareInvocation(
-    options: vscode.LanguageModelToolInvocationPrepareOptions<SubagentParams>,
-    _token: vscode.CancellationToken
-  ): Promise<vscode.PreparedToolInvocation> {
+    options: LanguageModelToolInvocationPrepareOptions<SubagentParams>,
+    _token: CancellationToken
+  ): Promise<PreparedToolInvocation> {
     return {
       invocationMessage: options.input.description || 'Running subagent...',
     };
   }
 
   async invoke(
-    options: vscode.LanguageModelToolInvocationOptions<SubagentParams>,
-    token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelToolResult> {
+    options: LanguageModelToolInvocationOptions<SubagentParams>,
+    token: CancellationToken
+  ): Promise<LanguageModelToolResult> {
     const { prompt, description, model: modelParam } = options.input;
 
     // Find all available providers
     const providers = OpenCodeSubagentTool.getProviders();
     if (providers.length === 0) {
-      const part = new vscode.LanguageModelTextPart(
+      const part = new LanguageModelTextPart(
         'No OpenCode providers available. Configure an API key or connect to a server first.'
       );
-      return new vscode.LanguageModelToolResult([part]);
+      return new LanguageModelToolResult([part]);
     }
 
     try {
       // Resolve which model to use
-      let targetProvider: vscode.LanguageModelChatProvider;
-      let targetModel: vscode.LanguageModelChatInformation | undefined;
+      let targetProvider: LanguageModelChatProvider;
+      let targetModel: LanguageModelChatInformation | undefined;
 
       if (modelParam) {
         // Model specified — search all providers for a matching model
         const resolved = await this.resolveModel(modelParam, providers, token);
         if (!resolved) {
           const available = await this.getAvailableModelsList(providers, token);
-          const part = new vscode.LanguageModelTextPart(
+          const part = new LanguageModelTextPart(
             `Model "${modelParam}" not found. Available models:\n${available}`
           );
-          return new vscode.LanguageModelToolResult([part]);
+          return new LanguageModelToolResult([part]);
         }
         targetProvider = resolved.provider;
         targetModel = resolved.model;
@@ -93,17 +93,17 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
           { silent: true }, token
         );
         if (!models || models.length === 0) {
-          const part = new vscode.LanguageModelTextPart(
+          const part = new LanguageModelTextPart(
             `Provider "${providers[0].vendor}" has no available models.`
           );
-          return new vscode.LanguageModelToolResult([part]);
+          return new LanguageModelToolResult([part]);
         }
         targetModel = models[0];
       }
 
       // Build the chat request
       const messages = [
-        vscode.LanguageModelChatMessage.User(prompt),
+        LanguageModelChatMessage.User(prompt),
       ];
 
       // Send request to the provider
@@ -112,10 +112,10 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
       await targetProvider.provideLanguageModelChatResponse(
         targetModel,
         messages,
-        { tools: [], toolMode: vscode.LanguageModelChatToolMode.Auto },
+        { tools: [], toolMode: LanguageModelChatToolMode.Auto },
         {
           report: (part) => {
-            if (part instanceof vscode.LanguageModelTextPart) {
+            if (part instanceof LanguageModelTextPart) {
               responseParts.push(part.value);
             }
           },
@@ -126,28 +126,32 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
       const responseText = responseParts.join('') || 'No response from subagent.';
 
       // Return the result with metadata
-      const result = new vscode.LanguageModelToolResult([
-        new vscode.LanguageModelTextPart(responseText),
+      const result = new LanguageModelToolResult([
+        new LanguageModelTextPart(responseText),
       ]);
 
       // Add tool metadata for tracking
-      (result as any).toolMetadata = {
+      const resultExt = result as unknown as {
+        toolMetadata: { prompt: string; description: string; vendor: string; modelId: string };
+        toolResultMessage: MarkdownString;
+      };
+      resultExt.toolMetadata = {
         prompt: prompt.substring(0, 100),
         description,
         vendor: this.getVendorForModel(targetModel, providers),
         modelId: targetModel.id,
       };
-      (result as any).toolResultMessage = new vscode.MarkdownString(
+      resultExt.toolResultMessage = new MarkdownString(
         `**${description}** completed`
       );
 
       return result;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      const part = new vscode.LanguageModelTextPart(
+      const part = new LanguageModelTextPart(
         `Subagent error: ${errorMessage}`
       );
-      return new vscode.LanguageModelToolResult([part]);
+      return new LanguageModelToolResult([part]);
     }
   }
 
@@ -158,8 +162,8 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
   private async resolveModel(
     modelParam: string,
     providers: ProviderEntry[],
-    token: vscode.CancellationToken
-  ): Promise<{ provider: vscode.LanguageModelChatProvider; model: vscode.LanguageModelChatInformation } | undefined> {
+    token: CancellationToken
+  ): Promise<{ provider: LanguageModelChatProvider; model: LanguageModelChatInformation } | undefined> {
     for (const entry of providers) {
       const models = await entry.provider.provideLanguageModelChatInformation(
         { silent: true }, token
@@ -188,7 +192,7 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
   /** Get a formatted list of available models */
   private async getAvailableModelsList(
     providers: ProviderEntry[],
-    token: vscode.CancellationToken
+    token: CancellationToken
   ): Promise<string> {
     const lines: string[] = [];
     for (const entry of providers) {
@@ -206,7 +210,7 @@ export class OpenCodeSubagentTool implements vscode.LanguageModelTool<SubagentPa
 
   /** Find the vendor for a given model */
   private getVendorForModel(
-    model: vscode.LanguageModelChatInformation,
+    model: LanguageModelChatInformation,
     providers: ProviderEntry[]
   ): string {
     for (const entry of providers) {

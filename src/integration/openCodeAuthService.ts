@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { ExtensionContext } from 'vscode';
 import { SecretStorage } from '../config/secretStorage';
 
 /**
@@ -7,7 +7,6 @@ import { SecretStorage } from '../config/secretStorage';
  */
 export class OpenCodeAuthService {
   private static instance: OpenCodeAuthService | undefined;
-  private static pendingContext: vscode.ExtensionContext | undefined;
   private storage: SecretStorage | undefined;
   
   // SecretStorage keys
@@ -17,14 +16,14 @@ export class OpenCodeAuthService {
   private static readonly EXPIRES_AT_KEY = 'opencode-zen.openCodeTokenExpiresAt';
   private static readonly AUTH_COOKIE_KEY = 'opencode-zen.openCodeAuthCookie';
 
-  private constructor(context: vscode.ExtensionContext) {
+  private constructor(context: ExtensionContext) {
     this.storage = new SecretStorage(context);
   }
 
   /**
    * Initialize the singleton with a context. Call this during activation.
    */
-  public static init(context: vscode.ExtensionContext): OpenCodeAuthService {
+  public static init(context: ExtensionContext): OpenCodeAuthService {
     if (!OpenCodeAuthService.instance) {
       OpenCodeAuthService.instance = new OpenCodeAuthService(context);
     }
@@ -37,10 +36,7 @@ export class OpenCodeAuthService {
    */
   public static getInstance(): OpenCodeAuthService {
     if (!OpenCodeAuthService.instance) {
-      // Should not happen if init() was called during activation
-      console.warn('[OpenCodeAuthService] getInstance() called before init()');
-      // Create a throwaway instance to avoid crashes
-      OpenCodeAuthService.instance = new OpenCodeAuthService(OpenCodeAuthService.pendingContext!);
+      throw new Error('[OpenCodeAuthService] getInstance() called before init() — call init(context) during activation first.');
     }
     return OpenCodeAuthService.instance;
   }

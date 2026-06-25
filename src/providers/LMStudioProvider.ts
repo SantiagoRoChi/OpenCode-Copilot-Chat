@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { window, LanguageModelChatInformation, LanguageModelChatRequestMessage, ProvideLanguageModelChatResponseOptions, Progress, LanguageModelResponsePart, CancellationToken, LanguageModelChatTool } from 'vscode';
 import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { SecretStorage } from '../config/secretStorage';
 import { ServerData } from '../webview/openCodeWebviewProvider';
@@ -33,7 +33,7 @@ interface ServerEntry {
 
 export class LMStudioProvider extends BaseProvider {
   private readonly servers = new Map<string, ServerEntry>();
-  private readonly out = vscode.window.createOutputChannel('LM Studio');
+  private readonly out = window.createOutputChannel('LM Studio');
   private readonly storage?: SecretStorage;
 
   constructor(storage?: SecretStorage) {
@@ -101,14 +101,14 @@ export class LMStudioProvider extends BaseProvider {
    * Stream chat via LM Studio using the OpenAI SDK.
    */
   override async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatRequestMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
+    model: LanguageModelChatInformation,
+    messages: readonly LanguageModelChatRequestMessage[],
+    options: ProvideLanguageModelChatResponseOptions,
+    progress: Progress<LanguageModelResponsePart>,
+    token: CancellationToken
   ): Promise<void> {
-    const rm = model as RoutedModelInfo;
-    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+    const rm = model as RoutedModelInfo; // safe: routing data embedded at construction
+    const tools = (options as unknown as { tools?: LanguageModelChatTool[] }).tools;
 
     // LM Studio uses OpenAI-compatible API at /v1/chat/completions
     const baseUrl = rm._url.replace(/\/chat\/completions$/, '');
@@ -195,7 +195,7 @@ export class LMStudioProvider extends BaseProvider {
                 
                 this.out.appendLine(`[LMStudio] ${m.key}: reasoning levels = ${levels.join(', ')}`);
                 
-                info.configurationSchema = this.buildConfigurationSchema(levels, defaultLevel);
+                info.configurationSchema = this.buildConfigurationSchema(levels, defaultLevel, m.architecture ?? displayName, contextWindow);
               }
             }
 

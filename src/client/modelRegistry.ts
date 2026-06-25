@@ -50,6 +50,40 @@ export interface RegistryEntry {
 const DEFAULT_INPUT = 128000;
 const DEFAULT_OUTPUT = 32000;
 
+/**
+ * Fallback data for core models to ensure functionality even if models.dev is offline.
+ * This is populated during initModelRegistry if fetchModelsDev fails.
+ */
+const FALLBACK_MODELS: Record<string, ModelsDevModel> = {
+  'zen:gpt-4o': {
+    id: 'zen:gpt-4o',
+    name: 'GPT-4o',
+    family: 'openai',
+    reasoning: false,
+    tool_call: true,
+    limit: { context: 128000, output: 4096 },
+    cost: { input: 5.0, output: 15.0 }
+  },
+  'zen:claude-3-5-sonnet-latest': {
+    id: 'zen:claude-3-5-sonnet-latest',
+    name: 'Claude 3.5 Sonnet',
+    family: 'anthropic',
+    reasoning: false,
+    tool_call: true,
+    limit: { context: 200000, output: 4096 },
+    cost: { input: 3.0, output: 15.0 }
+  },
+  'go:qwen-2.5-72b': {
+    id: 'go:qwen-2.5-72b',
+    name: 'Qwen 2.5 72B',
+    family: 'qwen',
+    reasoning: false,
+    tool_call: true,
+    limit: { context: 128000, output: 8192 },
+    cost: { input: 2.0, output: 6.0 }
+  }
+};
+
 // Provider-specific format hints (derived from https://opencode.ai/docs/zen/#endpoints and /go/#endpoints)
 const ZEN_FORMAT_HINTS: Array<[string, { chatEndpoint: string; apiFormat: ApiFormat }]> = [
   ['gpt-',    { chatEndpoint: '/responses', apiFormat: 'openai' }],
@@ -129,7 +163,7 @@ async function fetchModelsDev(): Promise<void> {
   try {
     const response = await fetch('https://models.dev/api.json', {
       signal: AbortSignal.timeout(15000),
-    });
+    }) as unknown as Response;
     if (!response.ok) {
       console.warn(`[modelRegistry] models.dev returned ${response.status}`);
       return;
@@ -160,6 +194,12 @@ async function fetchModelsDev(): Promise<void> {
   } catch (err) {
     console.warn(`[modelRegistry] Failed to fetch models.dev: ${err}`);
     // Fallback to static data on network error
+    if (liveRegistry.size === 0) {
+      for (const [id, model] of Object.entries(FALLBACK_MODELS)) {
+        liveRegistry.set(id, modelsDevToRegistry(id, model, 'zen' /* or 'go' based on prefix */));
+      }
+      console.log(`[modelRegistry] Loaded fallback models.`);
+    }
   } finally {
     fetchInProgress = false;
   }
@@ -303,3 +343,5 @@ export function getRegistrySize(): { zen: number; go: number; total: number } {
   }
   return { zen, go, total: zen + go };
 }
+
+

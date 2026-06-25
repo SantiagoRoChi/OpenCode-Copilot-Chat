@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/VS%20Code-1.120+-blue.svg" alt="VS Code Version">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-3.6.1-green.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-3.7.0-green.svg" alt="Version">
 </p>
 
 <p align="center">
@@ -240,6 +240,26 @@ extension.ts
 - SDK-based handlers (`anthropicChat.ts`, `openaiChat.ts`) use official AI SDK packages
 - Shared utilities in `sdk/utils.ts` eliminate code duplication
 - LM Studio and Ollama use OpenAI-compatible API endpoints
+
+## 🚀 New Features (v3.7.0 — 2026-06-25)
+
+### Context Size Configuration
+Model configuration now includes a `contextSize` selector — choose **Default** (32K), **Large** (64K), or **Full** for supported models in the Copilot model picker. This gives you fine-grained control over prompt window vs. cost.
+
+### Utility Model Aliases
+Each cloud provider now generates smart utility aliases for quick model selection:
+- **Zen**: `opencode-cheap-zen` (cheapest), `opencode-fast-zen` (fastest)
+- **Go**: `opencode-cheap-go`, `opencode-fast-go`
+- **Free**: `opencode-fast-free`
+Aliases inherit the target model's API configuration automatically.
+
+### Family-Aware Reasoning Defaults
+Reasoning effort is automatically matched to model family — no manual tuning needed:
+| Family | Default Reasoning |
+|--------|-----------------|
+| Claude Opus/Sonnet, DeepSeek | `high` |
+| GPT, Claude Haiku, Gemini | `medium` |
+| Qwen, MiniMax | `low` |
 
 ## 📝 Recent Changes (2026-06-19)
 

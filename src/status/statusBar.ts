@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { window, StatusBarAlignment, StatusBarItem, Disposable, MarkdownString } from 'vscode';
 import { StatusSnapshot } from '../client/types';
 import { UsageStats } from '../usage/UsageTracker';
 
@@ -142,8 +142,8 @@ function formatTimeAgo(past: number, now: number): string {
   return `${hours}h ago`;
 }
 
-export class StatusBarManager implements vscode.Disposable {
-  private item: vscode.StatusBarItem;
+export class StatusBarManager implements Disposable {
+  private item: StatusBarItem;
   private state: StatusBarState = { kind: 'probing' };
   private usageStats?: UsageStats;
   private respondedRevertTimer?: ReturnType<typeof setTimeout>;
@@ -151,7 +151,7 @@ export class StatusBarManager implements vscode.Disposable {
   constructor(
     private readonly getSnapshot: () => StatusSnapshot
   ) {
-    this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    this.item = window.createStatusBarItem(StatusBarAlignment.Right, 100);
     this.item.name = 'OpenCode Zen';
     this.item.command = 'opencode-zen.showUsage';
     this.render();
@@ -224,7 +224,7 @@ export class StatusBarManager implements vscode.Disposable {
   private render(): void {
     this.item.text = renderStatusBarText(this.state, this.usageStats);
     const snapshot = this.getSnapshot();
-    const md = new vscode.MarkdownString(renderTooltip(snapshot, this.usageStats));
+    const md = new MarkdownString(renderTooltip(snapshot, this.usageStats));
     md.isTrusted = true;
     md.supportThemeIcons = true;
     md.supportHtml = false;

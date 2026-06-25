@@ -1,6 +1,26 @@
 # Changelog
 
-## [3.6.1] - 2026-06-22
+## [3.7.0] - 2026-06-25
+
+### 🚀 Fase 1: Model Management & Configuration Improvements
+
+#### Added
+- **Context Size Configuration**: Model configuration UI now exposes `contextSize` — choose Default (32K), Large (64K), or Full for supported models
+- **Utility Model Aliases**: Each cloud provider generates smart aliases:
+  - Zen: `opencode-cheap-zen` (cheapest model), `opencode-fast-zen` (fastest by context size)
+  - Go: `opencode-cheap-go` (cheapest), `opencode-fast-go` (fastest)
+  - Free: `opencode-fast-free` (fastest free model)
+  - Aliases route to the correct API ID automatically
+- **Family-Aware Reasoning Defaults**: Reasoning effort automatically matched to model family:
+  - Claude/Sonnet/Opus/DeepSeek → `high`
+  - GPT/Haiku/Gemini → `medium`
+  - Qwen/MiniMax → `low`
+- **Configuration documentation**: New "Model Configuration" section in README
+
+#### Changed
+- `BaseProvider.buildConfigurationSchema()` now accepts `caps.family` + `maxInputTokens` to generate richer model config options
+- All cloud providers (`Zen`, `Go`, `Free`) pass model family and context window to their base for proper defaults
+- LM Studio and Ollama providers pass architecture and context window metadata
 
 ### 🐛 Fixed
 

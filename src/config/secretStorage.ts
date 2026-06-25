@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { SecretStorage as VSCodeSecretStorage, ExtensionContext, Memento } from 'vscode';
 
 const ZEN_SECRET_KEY = 'opencode-zen.zenKey';
 const GO_SECRET_KEY = 'opencode-zen.goKey';
@@ -27,10 +27,10 @@ export interface LocalServerConfig {
 }
 
 export class SecretStorage {
-  private secrets: vscode.SecretStorage;
-  private state: vscode.Memento;
+  private secrets: VSCodeSecretStorage;
+  private state: Memento;
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: ExtensionContext) {
     this.secrets = context.secrets;
     this.state = context.workspaceState;
   }

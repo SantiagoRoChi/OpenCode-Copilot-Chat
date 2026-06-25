@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { window, ExtensionContext, CancellationToken, LanguageModelChatInformation, LanguageModelChatRequestMessage, LanguageModelChatTool, LanguageModelResponsePart, Progress, ProvideLanguageModelChatResponseOptions } from 'vscode';
 import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { ApiModel } from '../client/types';
 import { ZEN_BASE_URL } from '../client/endpoints';
@@ -10,12 +10,12 @@ import { streamAnthropicChat, TokenUsage as AnthropicTokenUsage } from './sdk/an
 export class OpenCodeFreeProvider extends BaseProvider {
   private apiKey = '';
   private readonly storage: SecretStorage;
-  private readonly out = vscode.window.createOutputChannel('OpenCode Free');
+  private readonly out = window.createOutputChannel('OpenCode Free');
   private onUsageCallback?: (usage: { prompt: number; completion: number; total: number }) => void;
 
   get vendor(): string { return 'opencode-free'; }
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: ExtensionContext) {
     super();
     this.storage = new SecretStorage(context);
   }
@@ -38,21 +38,20 @@ export class OpenCodeFreeProvider extends BaseProvider {
   getApiKey(): string { return this.apiKey; }
 
   override async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatRequestMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
+    model: LanguageModelChatInformation,
+    messages: readonly LanguageModelChatRequestMessage[],
+    options: ProvideLanguageModelChatResponseOptions,
+    progress: Progress<LanguageModelResponsePart>,
+    token: CancellationToken
   ): Promise<void> {
-    const rm = model as RoutedModelInfo;
+    const rm = model as RoutedModelInfo; // safe: RoutedModelInfo extends LanguageModelChatInformation with routing data embedded
     const apiKey = this.apiKey;
     if (!apiKey) {
       throw new Error('API key not configured. Use "OpenCode Zen: Configure Zen Key".');
     }
 
-    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+    const tools = (options as unknown as { tools?: LanguageModelChatTool[] }).tools;
     
-    // Extract model options including user configuration from the UI
     const modelOpts = this.extractModelOptions(options);
 
     const handleUsage = (usage: AnthropicTokenUsage | OpenAITokenUsage) => {
@@ -79,8 +78,8 @@ export class OpenCodeFreeProvider extends BaseProvider {
 
   override async provideLanguageModelChatInformation(
     options: { silent: boolean; configuration?: Record<string, unknown> },
-    token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelChatInformation[]> {
+    token: CancellationToken
+  ): Promise<LanguageModelChatInformation[]> {
     const configKey = options.configuration?.apiKey as string | undefined;
     if (configKey && configKey !== this.apiKey) await this.setApiKey(configKey);
     return super.provideLanguageModelChatInformation(options, token);
@@ -94,14 +93,24 @@ export class OpenCodeFreeProvider extends BaseProvider {
         headers: this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {},
         signal: AbortSignal.timeout(10000),
       });
-      if (!res.ok) return [];
+      if (!res.ok) {
+        this.out.appendLine(`[Free] HTTP ${res.status} - API key may be invalid`);
+        return [];
+      }
       const data = await res.json() as { data: ApiModel[] };
-      // Free tier: only free/pickle models
-      const models = (data.data ?? []).filter(
-        m => m.id.includes('free') || m.id.includes('pickle')
-      );
-      this.out.appendLine(`[Free] ${models.length} models`);
-      return models.map(m => this.toModelInfo(m.id));
+      
+      const allModels = data.data ?? [];
+      const models = allModels.filter(m => {
+        const caps = getModelCapabilities(m.id);
+        const inputPrice = caps.pricePerMillionInput;
+        const outputPrice = caps.pricePerMillionOutput;
+        const isFree = (inputPrice === undefined || inputPrice === 0) &&
+                       (outputPrice === undefined || outputPrice === 0);
+        return isFree;
+      });
+      
+      this.out.appendLine(`[Free] ${models.length}/${allModels.length} models (filtered by zero pricing)`);
+      return this.buildUtilityAliases(models.map(m => this.toModelInfo(m.id)));
     } catch (err) {
       this.out.appendLine(`[Free] error: ${err}`);
       return [];
@@ -130,12 +139,31 @@ export class OpenCodeFreeProvider extends BaseProvider {
       } : undefined,
     };
 
-    // Build configuration schema based on model capabilities
     info.configurationSchema = this.buildConfigurationSchema(
-      caps.supportedReasoningLevels
+      caps.supportedReasoningLevels,
+      undefined,
+      caps.family,
+      caps.maxInputTokens
     );
 
     return info;
+  }
+
+  private buildUtilityAliases(models: RoutedModelInfo[]): RoutedModelInfo[] {
+    if (models.length === 0) return models;
+    const sortedBySpeed = [...models].sort(
+      (a, b) => (a.maxInputTokens ?? Infinity) - (b.maxInputTokens ?? Infinity)
+    );
+    const result = [...models];
+    if (sortedBySpeed.length > 0) {
+      const fastest = sortedBySpeed[0];
+      result.push(this.buildAliasModel('opencode-fast-free', 'Fast (Free)', fastest));
+    }
+    return result;
+  }
+
+  private buildAliasModel(id: string, name: string, target: RoutedModelInfo): RoutedModelInfo {
+    return { ...target, id, name };
   }
 
   override dispose(): void {
@@ -143,4 +171,3 @@ export class OpenCodeFreeProvider extends BaseProvider {
     super.dispose();
   }
 }
-

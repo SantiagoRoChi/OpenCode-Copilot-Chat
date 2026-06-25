@@ -1,10 +1,10 @@
-import * as vscode from 'vscode';
+import { EventEmitter, ThemeIcon, TreeDataProvider, TreeItem, TreeItemCollapsibleState } from 'vscode';
 import { DashboardState } from '../webview/openCodeWebviewProvider';
 
-type TreeItem = HeaderNode | StatNode | ActionNode | InfoNode;
+type TreeViewNode = HeaderNode | StatNode | ActionNode | InfoNode;
 
-export class OpenCodeTreeProvider implements vscode.TreeDataProvider<TreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<TreeItem | undefined>();
+export class OpenCodeTreeProvider implements TreeDataProvider<TreeViewNode> {
+  private _onDidChangeTreeData = new EventEmitter<TreeViewNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private state?: DashboardState;
 
@@ -13,17 +13,17 @@ export class OpenCodeTreeProvider implements vscode.TreeDataProvider<TreeItem> {
     this._onDidChangeTreeData.fire(undefined);
   }
 
-  getTreeItem(element: TreeItem): vscode.TreeItem {
+  getTreeItem(element: TreeViewNode): TreeItem {
     return element;
   }
 
-  getChildren(element?: TreeItem): TreeItem[] {
+  getChildren(element?: TreeViewNode): TreeViewNode[] {
     if (!element) return this.getRootNodes();
     if (element instanceof HeaderNode) return element.children;
     return [];
   }
 
-  private getRootNodes(): TreeItem[] {
+  private getRootNodes(): TreeViewNode[] {
     if (!this.state) return [new InfoNode('Loading...')];
     const items: TreeItem[] = [];
 
@@ -87,7 +87,7 @@ export class OpenCodeTreeProvider implements vscode.TreeDataProvider<TreeItem> {
     items.push(new HeaderNode('Dashboard', dashChildren));
 
     // ── Config section ──
-    const configChildren: TreeItem[] = [
+    const configChildren: TreeViewNode[] = [
       new ActionNode('Login with OpenCode', 'opencode-zen.openUsageWebview', 'sign-in'),
       new ActionNode('Configure Workspace URL', 'opencode-zen.pasteWorkspaceUrl', 'link-external'),
       new ActionNode('Set Zen API Key', 'opencode-zen.configureZen', 'key'),
@@ -112,32 +112,32 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-class HeaderNode extends vscode.TreeItem {
-  constructor(label: string, public readonly children: TreeItem[]) {
-    super(label, vscode.TreeItemCollapsibleState.Expanded);
-    this.iconPath = new vscode.ThemeIcon('folder');
+class HeaderNode extends TreeItem {
+  constructor(label: string, public readonly children: TreeViewNode[]) {
+    super(label, TreeItemCollapsibleState.Expanded);
+    this.iconPath = new ThemeIcon('folder');
   }
 }
 
-class StatNode extends vscode.TreeItem {
+class StatNode extends TreeItem {
   constructor(label: string, desc: string) {
-    super(label, vscode.TreeItemCollapsibleState.None);
+    super(label, TreeItemCollapsibleState.None);
     this.description = desc;
-    this.iconPath = new vscode.ThemeIcon('graph');
+    this.iconPath = new ThemeIcon('graph');
   }
 }
 
-class ActionNode extends vscode.TreeItem {
+class ActionNode extends TreeItem {
   constructor(label: string, command: string, icon: string) {
-    super(label, vscode.TreeItemCollapsibleState.None);
-    this.iconPath = new vscode.ThemeIcon(icon);
+    super(label, TreeItemCollapsibleState.None);
+    this.iconPath = new ThemeIcon(icon);
     this.command = { command, title: label };
   }
 }
 
-class InfoNode extends vscode.TreeItem {
+class InfoNode extends TreeItem {
   constructor(text: string) {
-    super(text, vscode.TreeItemCollapsibleState.None);
-    this.iconPath = new vscode.ThemeIcon('info');
+    super(text, TreeItemCollapsibleState.None);
+    this.iconPath = new ThemeIcon('info');
   }
 }

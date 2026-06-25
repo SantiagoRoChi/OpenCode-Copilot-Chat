@@ -1,12 +1,21 @@
-import * as vscode from 'vscode';
+import { window, StatusBarAlignment, StatusBarItem, Disposable } from 'vscode';
+
+/** Proposed VS Code API interface for chat status items */
+interface ChatStatusItem extends Disposable {
+  text: string;
+  detail?: string;
+  severity?: number;
+  show(): void;
+  hide(): void;
+}
 
 /**
  * Manages chat status items for each provider using the proposed chatStatusItem API.
  * Falls back to status bar items when the API is not available.
  */
 export class ChatStatusItemManager {
-  private items = new Map<string, any>(); // vscode.ChatStatusItem when available
-  private fallbackItems = new Map<string, vscode.StatusBarItem>();
+  private items = new Map<string, ChatStatusItem>();
+  private fallbackItems = new Map<string, StatusBarItem>();
 
   /**
    * Create or update a status item for a provider.
@@ -16,13 +25,15 @@ export class ChatStatusItemManager {
     label: string,
     text: string,
     detail?: string,
-    severity?: any
+    severity?: number
   ): void {
-    const vscodeAny = vscode as any;
-    if (typeof vscodeAny.createChatStatusItem === 'function') {
+    const extendedWindow = window as typeof window & {
+      createChatStatusItem?: (id: string, label: string) => ChatStatusItem;
+    };
+    if (typeof extendedWindow.createChatStatusItem === 'function') {
       let item = this.items.get(providerId);
       if (!item) {
-        item = vscodeAny.createChatStatusItem(providerId, label);
+        item = extendedWindow.createChatStatusItem!(providerId, label);
         this.items.set(providerId, item);
       }
       item.text = text;
@@ -33,7 +44,7 @@ export class ChatStatusItemManager {
       // Fallback to status bar
       let item = this.fallbackItems.get(providerId);
       if (!item) {
-        item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+        item = window.createStatusBarItem(StatusBarAlignment.Right, 100);
         this.fallbackItems.set(providerId, item);
       }
       item.text = `$(hubot) ${label}: ${text}`;

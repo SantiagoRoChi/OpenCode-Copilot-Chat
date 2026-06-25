@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { chat, Uri, ExtensionContext, ChatParticipant, ChatRequest, ChatContext, ChatResponseStream, CancellationToken, ChatResult, LanguageModelChatProvider, LanguageModelChatInformation, LanguageModelChatMessage, LanguageModelTextPart, LanguageModelToolCallPart, LanguageModelChatToolMode, ChatRequestTurn, ChatResponseTurn, ChatResponseMarkdownPart, ChatFollowup, LanguageModelChatTool } from 'vscode';
 
 /**
  * OpenCode Chat Participant
@@ -17,17 +17,17 @@ import * as vscode from 'vscode';
 export interface ProviderEntry {
   vendor: string;
   displayName: string;
-  provider: vscode.LanguageModelChatProvider;
+  provider: LanguageModelChatProvider;
 }
 
 /**
  * Creates and registers the @opencode chat participant.
  */
 export function registerOpenCodeChatParticipant(
-  context: vscode.ExtensionContext,
+  context: ExtensionContext,
   providers: ProviderEntry[]
-): vscode.ChatParticipant {
-  const participant = vscode.chat.createChatParticipant(
+): ChatParticipant {
+  const participant = chat.createChatParticipant(
     'opencode.chat',
     async (request, chatContext, stream, token) => {
       return handleOpenCodeRequest(request, chatContext, stream, token, providers);
@@ -36,8 +36,8 @@ export function registerOpenCodeChatParticipant(
 
   // Set the icon for @opencode in the chat
   participant.iconPath = {
-    light: vscode.Uri.joinPath(context.extensionUri, 'assets', 'icon.png'),
-    dark: vscode.Uri.joinPath(context.extensionUri, 'assets', 'icon.png'),
+    light: Uri.joinPath(context.extensionUri, 'assets', 'icon.png'),
+    dark: Uri.joinPath(context.extensionUri, 'assets', 'icon.png'),
   };
 
   // Provide follow-up suggestions after each response
@@ -54,12 +54,12 @@ export function registerOpenCodeChatParticipant(
  * Main request handler — routes the chat request to the best available provider.
  */
 async function handleOpenCodeRequest(
-  request: vscode.ChatRequest,
-  _chatContext: vscode.ChatContext,
-  stream: vscode.ChatResponseStream,
-  token: vscode.CancellationToken,
+  request: ChatRequest,
+  _chatContext: ChatContext,
+  stream: ChatResponseStream,
+  token: CancellationToken,
   providers: ProviderEntry[]
-): Promise<vscode.ChatResult> {
+): Promise<ChatResult> {
   // Find the best available provider
   const availableProviders = providers.filter(p => p.provider);
   if (availableProviders.length === 0) {
@@ -75,7 +75,7 @@ async function handleOpenCodeRequest(
 
   // Determine which provider/model to use
   let selectedProvider: ProviderEntry;
-  let selectedModel: vscode.LanguageModelChatInformation | undefined;
+  let selectedModel: LanguageModelChatInformation | undefined;
 
   // Check if user specified a model via the chat model picker
   if (request.model) {
@@ -84,9 +84,9 @@ async function handleOpenCodeRequest(
       const models = await entry.provider.provideLanguageModelChatInformation(
         { silent: true }, token
       );
-      if (models?.some(m => m.id === (request.model as any).id)) {
+      if (models?.some(m => m.id === request.model.id)) {
         selectedProvider = entry;
-        selectedModel = models.find(m => m.id === (request.model as any).id);
+        selectedModel = models.find(m => m.id === request.model.id);
         break;
       }
     }
@@ -110,18 +110,27 @@ async function handleOpenCodeRequest(
   }
 
   // Build the message history
-  const messages: vscode.LanguageModelChatMessage[] = [];
+  const messages: LanguageModelChatMessage[] = [];
 
   // Add conversation history from chat context
-  for (const historyEntry of _chatContext.history) {
-    if (historyEntry instanceof vscode.ChatResponseMarkdownPart) {
-      // This is a previous user message or assistant response
-      // The history is already formatted, we pass it as context
+  for (const turn of _chatContext.history) {
+    if (turn instanceof ChatRequestTurn) {
+      messages.push(LanguageModelChatMessage.User(turn.prompt));
+    } else if (turn instanceof ChatResponseTurn) {
+      const parts: string[] = [];
+      for (const part of turn.response) {
+        if (part instanceof ChatResponseMarkdownPart) {
+          parts.push(part.value.value);
+        }
+      }
+      if (parts.length > 0) {
+        messages.push(LanguageModelChatMessage.Assistant(parts.join('\n\n')));
+      }
     }
   }
 
   // Add the current user prompt
-  messages.push(vscode.LanguageModelChatMessage.User(request.prompt));
+  messages.push(LanguageModelChatMessage.User(request.prompt));
 
   // Stream the response
   try {
@@ -131,12 +140,12 @@ async function handleOpenCodeRequest(
     await selectedProvider.provider.provideLanguageModelChatResponse(
       selectedModel,
       messages,
-      { tools: request.toolReferences.map(t => t as any), toolMode: vscode.LanguageModelChatToolMode.Auto as any },
+      { tools: request.toolReferences.map(t => t as unknown as LanguageModelChatTool), toolMode: LanguageModelChatToolMode.Auto },
       {
         report: (part) => {
-          if (part instanceof vscode.LanguageModelTextPart) {
+          if (part instanceof LanguageModelTextPart) {
             stream.markdown(part.value);
-          } else if (part instanceof vscode.LanguageModelToolCallPart) {
+          } else if (part instanceof LanguageModelToolCallPart) {
             // Tool calls are handled by VS Code automatically
             stream.markdown(`> 🔧 Tool called: **${part.name}**`);
           }
@@ -174,8 +183,8 @@ async function handleOpenCodeRequest(
  * Provides follow-up suggestions after each response.
  */
 function provideFollowups(
-  result: vscode.ChatResult
-): vscode.ChatFollowup[] {
+  result: ChatResult
+): ChatFollowup[] {
   if (result.metadata?.command === 'no-providers') {
     return [
       {

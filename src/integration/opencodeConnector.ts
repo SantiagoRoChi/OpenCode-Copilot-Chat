@@ -1,5 +1,6 @@
-import * as vscode from 'vscode';
-import * as path from 'path';
+import { workspace, Uri, EventEmitter, OutputChannel, ExtensionContext, FileSystemWatcher, RelativePattern } from 'vscode';
+import { basename, dirname } from 'path';
+import { existsSync } from 'fs';
 import { OpenCodeHealthResponse } from '../client/types';
 import { readLocalKeys, LocalKeys, getAuthPath } from './authReader';
 
@@ -17,11 +18,11 @@ interface OpenCodeDetection {
 
 export class OpenCodeConnector {
   private detection?: OpenCodeDetection;
-  private authWatcher?: vscode.FileSystemWatcher;
-  private readonly _onDidChangeLocalKeys = new vscode.EventEmitter<LocalKeys>();
+  private authWatcher?: FileSystemWatcher;
+  private readonly _onDidChangeLocalKeys = new EventEmitter<LocalKeys>();
   readonly onDidChangeLocalKeys = this._onDidChangeLocalKeys.event;
 
-  constructor(private readonly outputChannel: vscode.OutputChannel) {}
+  constructor(private readonly outputChannel: OutputChannel) {}
 
   async detect(): Promise<OpenCodeDetection> {
     if (this.detection) return this.detection;
@@ -53,8 +54,7 @@ export class OpenCodeConnector {
     }
 
     const authPath = getAuthPath();
-    const fs = require('fs') as typeof import('fs');
-    const authExists = fs.existsSync(authPath);
+    const authExists = existsSync(authPath);
 
     this.detection = {
       installed: authExists,
@@ -86,14 +86,14 @@ export class OpenCodeConnector {
     return !!(keys.zenKey || keys.goKey);
   }
 
-  watchAuthFile(context: vscode.ExtensionContext): void {
+  watchAuthFile(context: ExtensionContext): void {
     if (this.authWatcher) return;
     const authPath = getAuthPath();
-    const pattern = new vscode.RelativePattern(
-      vscode.Uri.file(path.dirname(authPath)),
-      path.basename(authPath)
+    const pattern = new RelativePattern(
+      Uri.file(dirname(authPath)),
+      basename(authPath)
     );
-    this.authWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+    this.authWatcher = workspace.createFileSystemWatcher(pattern);
     this.authWatcher.onDidChange(async () => {
       this.outputChannel.appendLine('auth.json changed');
       const newKeys = await readLocalKeys();

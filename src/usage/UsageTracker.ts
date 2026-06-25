@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { EventEmitter } from 'vscode';
 import { TokenUsage, RequestMeta } from '../client/types';
 
 /**
@@ -128,7 +128,7 @@ interface UsageLogEntry {
 export class UsageTracker {
   private records: UsageRecord[] = [];
   private costEntries: UsageLogEntry[] = [];  // For cost calculation
-  private readonly _onDidChangeUsage = new vscode.EventEmitter<UsageStats>();
+  private readonly _onDidChangeUsage = new EventEmitter<UsageStats>();
   readonly onDidChangeUsage = this._onDidChangeUsage.event;
 
   recordRequest(

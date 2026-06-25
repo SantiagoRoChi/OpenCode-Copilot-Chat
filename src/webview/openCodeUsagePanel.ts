@@ -1,5 +1,5 @@
-import * as vscode from 'vscode';
-import * as http from 'http';
+import { commands, Disposable, ExtensionContext, Uri, ViewColumn, window } from 'vscode';
+import { createServer, Server } from 'http';
 import { OpenCodeAuthService } from '../integration/openCodeAuthService';
 
 /**
@@ -11,17 +11,17 @@ export class OpenCodeUsagePanel {
   private static readonly AUTH_CALLBACK_SCHEME = 'opencodezen';
   private static instance: OpenCodeUsagePanel | undefined;
   private authService: OpenCodeAuthService;
-  private localServer: http.Server | null = null;
+  private localServer: Server | null = null;
   private localPort: number = 0;
-  private disposables: vscode.Disposable[] = [];
+  private disposables: Disposable[] = [];
 
-  private constructor(context: vscode.ExtensionContext) {
+  private constructor(context: ExtensionContext) {
     this.authService = OpenCodeAuthService.getInstance();
 
     // Register URI handler to capture OAuth callback
     context.subscriptions.push(
-      vscode.window.registerUriHandler({
-        handleUri: (uri: vscode.Uri) => {
+      window.registerUriHandler({
+        handleUri: (uri: Uri) => {
           this.handleUriCallback(uri);
         }
       })
@@ -31,7 +31,7 @@ export class OpenCodeUsagePanel {
   /**
    * Initialize the panel (call once during activation).
    */
-  public static initialize(context: vscode.ExtensionContext): OpenCodeUsagePanel {
+  public static initialize(context: ExtensionContext): OpenCodeUsagePanel {
     if (!OpenCodeUsagePanel.instance) {
       OpenCodeUsagePanel.instance = new OpenCodeUsagePanel(context);
     }
@@ -51,13 +51,13 @@ export class OpenCodeUsagePanel {
     const authUrl = `${OpenCodeUsagePanel.AUTH_URL}?redirect_uri=${encodeURIComponent(redirectUri)}`;
 
     // Open in VS Code's Simple Browser (real browser, no CORS issues)
-    await vscode.commands.executeCommand(
+    await commands.executeCommand(
       'simpleBrowser.api.open',
-      vscode.Uri.parse(authUrl),
-      { viewColumn: vscode.ViewColumn.Beside }
+      Uri.parse(authUrl),
+      { viewColumn: ViewColumn.Beside }
     );
 
-    vscode.window.showInformationMessage(
+    window.showInformationMessage(
       'Log in to OpenCode in the browser panel. The workspace ID and auth cookie will be captured automatically.'
     );
   }
@@ -71,7 +71,7 @@ export class OpenCodeUsagePanel {
     }
 
     return new Promise((resolve) => {
-      this.localServer = http.createServer((req, res) => {
+      this.localServer = createServer((req, res) => {
         const url = new URL(req.url || '/', `http://localhost`);
         
         if (url.pathname === '/callback') {
@@ -114,7 +114,7 @@ export class OpenCodeUsagePanel {
           `);
 
           // Notify VS Code
-          vscode.window.showInformationMessage(
+          window.showInformationMessage(
             `✅ OpenCode authenticated! Workspace: ${finalWorkspaceId || 'Unknown'}`,
             'Open Usage'
           ).then(choice => {
@@ -157,13 +157,13 @@ export class OpenCodeUsagePanel {
     const workspaceId = await this.authService.getWorkspaceId();
     if (workspaceId) {
       const usageUrl = `https://opencode.ai/workspace/${workspaceId}/usage`;
-      await vscode.commands.executeCommand(
+      await commands.executeCommand(
         'simpleBrowser.api.open',
-        vscode.Uri.parse(usageUrl),
-        { viewColumn: vscode.ViewColumn.Beside }
+        Uri.parse(usageUrl),
+        { viewColumn: ViewColumn.Beside }
       );
     } else {
-      vscode.window.showWarningMessage(
+      window.showWarningMessage(
         'No workspace configured. Please log in first.',
         'Login'
       ).then(choice => {
@@ -180,11 +180,11 @@ export class OpenCodeUsagePanel {
    */
   public async promptForWorkspaceUrl(): Promise<void> {
     if (!this.authService) {
-      vscode.window.showErrorMessage('OpenCode Auth Service not initialized. Please reload VS Code.');
+      window.showErrorMessage('OpenCode Auth Service not initialized. Please reload VS Code.');
       return;
     }
 
-    const url = await vscode.window.showInputBox({
+    const url = await window.showInputBox({
       title: 'OpenCode Workspace URL',
       prompt: 'Paste the URL from the browser after logging in (e.g., https://opencode.ai/workspace/wrk_xxx/usage)',
       placeHolder: 'https://opencode.ai/workspace/wrk_...',
@@ -211,7 +211,7 @@ export class OpenCodeUsagePanel {
     if (workspaceId) {
       await this.authService.setWorkspaceId(workspaceId);
       
-      vscode.window.showInformationMessage(
+      window.showInformationMessage(
         `✅ Workspace configured: ${workspaceId}`,
         'Open Usage'
       ).then(choice => {
@@ -225,7 +225,7 @@ export class OpenCodeUsagePanel {
   /**
    * Handle URI callback from OAuth redirect.
    */
-  private async handleUriCallback(uri: vscode.Uri): Promise<void> {
+  private async handleUriCallback(uri: Uri): Promise<void> {
     const query = new URLSearchParams(uri.query);
     const code = query.get('code');
     const state = query.get('state');
@@ -233,7 +233,7 @@ export class OpenCodeUsagePanel {
     if (code) {
       // Store the auth code — in a real implementation, exchange for tokens
       await this.authService.setToken(code);
-      vscode.window.showInformationMessage('OpenCode authentication code received!');
+      window.showInformationMessage('OpenCode authentication code received!');
     }
 
     // Extract workspace ID from the path
@@ -242,7 +242,7 @@ export class OpenCodeUsagePanel {
     if (workspaceIndex >= 0 && workspaceIndex + 1 < pathParts.length) {
       const workspaceId = pathParts[workspaceIndex + 1];
       await this.authService.setWorkspaceId(workspaceId);
-      vscode.window.showInformationMessage(`Workspace: ${workspaceId}`);
+      window.showInformationMessage(`Workspace: ${workspaceId}`);
     }
   }
 

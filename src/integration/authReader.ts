@@ -1,5 +1,5 @@
-import * as os from 'os';
-import * as path from 'path';
+import { homedir } from 'os';
+import { join } from 'path';
 import { OpenCodeAuthFile, OpenCodeHealthResponse } from '../client/types';
 import { ZEN_MODEL_ID, GO_MODEL_ID } from '../client/endpoints';
 
@@ -11,19 +11,19 @@ try {
 }
 
 export function getAuthPath(): string {
-  const home = os.homedir();
+  const home = homedir();
   switch (process.platform) {
     case 'win32':
-      return path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'opencode', 'auth.json');
+      return join(process.env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'opencode', 'auth.json');
     case 'darwin':
-      return path.join(home, '.local', 'share', 'opencode', 'auth.json');
+      return join(home, '.local', 'share', 'opencode', 'auth.json');
     default:
-      return path.join(home, '.local', 'share', 'opencode', 'auth.json');
+      return join(home, '.local', 'share', 'opencode', 'auth.json');
   }
 }
 
 function getConfigPath(): string {
-  return path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
+  return join(homedir(), '.config', 'opencode', 'opencode.json');
 }
 
 export async function readAuthJson(): Promise<OpenCodeAuthFile | null> {

@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { window, ExtensionContext, CancellationToken, LanguageModelChatInformation, LanguageModelChatRequestMessage, LanguageModelChatTool, LanguageModelResponsePart, Progress, ProvideLanguageModelChatResponseOptions } from 'vscode';
 import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { ZEN_BASE_URL } from '../client/endpoints';
 import { SecretStorage } from '../config/secretStorage';
@@ -10,12 +10,12 @@ import { streamOpenAIChat, TokenUsage as OpenAITokenUsage } from './sdk/openaiCh
 export class OpenCodeZenProvider extends BaseProvider {
   protected apiKey = '';
   private readonly storage: SecretStorage;
-  protected readonly out = vscode.window.createOutputChannel('OpenCode Zen');
+  protected readonly out = window.createOutputChannel('OpenCode Zen');
   private onUsageCallback?: (usage: { prompt: number; completion: number; total: number }) => void;
 
   get vendor(): string { return 'opencode-zen'; }
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: ExtensionContext) {
     super();
     this.storage = new SecretStorage(context);
   }
@@ -39,11 +39,10 @@ export class OpenCodeZenProvider extends BaseProvider {
 
   getApiKey(): string { return this.apiKey; }
 
-  // Accept apiKey from VS Code's native provider-group configuration
   override async provideLanguageModelChatInformation(
     options: { silent: boolean; configuration?: Record<string, unknown> },
-    token: vscode.CancellationToken
-  ): Promise<vscode.LanguageModelChatInformation[]> {
+    token: CancellationToken
+  ): Promise<LanguageModelChatInformation[]> {
     const configKey = options.configuration?.apiKey as string | undefined;
     if (configKey && configKey !== this.apiKey) {
       await this.setApiKey(configKey);
@@ -51,26 +50,21 @@ export class OpenCodeZenProvider extends BaseProvider {
     return super.provideLanguageModelChatInformation(options, token);
   }
 
-  /**
-   * Routes each chat request to the correct AI SDK based on the model's API format.
-   * The API key is passed fresh to the SDK on every call — no stale cache.
-   */
   override async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
-    messages: readonly vscode.LanguageModelChatRequestMessage[],
-    options: vscode.ProvideLanguageModelChatResponseOptions,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken
+    model: LanguageModelChatInformation,
+    messages: readonly LanguageModelChatRequestMessage[],
+    options: ProvideLanguageModelChatResponseOptions,
+    progress: Progress<LanguageModelResponsePart>,
+    token: CancellationToken
   ): Promise<void> {
-    const rm = model as RoutedModelInfo;
+    const rm = model as RoutedModelInfo; // safe: RoutedModelInfo extends LanguageModelChatInformation with routing data embedded
     const apiKey = this.apiKey;
     if (!apiKey) {
       throw new Error('Zen API key not configured. Use "OpenCode Zen: Configure Zen Key".');
     }
 
-    const tools = (options as any).tools as vscode.LanguageModelChatTool[] | undefined;
+    const tools = (options as unknown as { tools?: LanguageModelChatTool[] }).tools;
     
-    // Extract model options including user configuration from the UI
     const modelOpts = this.extractModelOptions(options);
 
     const handleUsage = (usage: AnthropicTokenUsage | OpenAITokenUsage) => {
@@ -86,7 +80,6 @@ export class OpenCodeZenProvider extends BaseProvider {
         handleUsage,
       );
     } else {
-      // openai or openai-compatible
       await streamOpenAIChat(
         apiKey, `${ZEN_BASE_URL}`, rm._apiId,
         rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
@@ -98,11 +91,17 @@ export class OpenCodeZenProvider extends BaseProvider {
 
   protected getBaseUrl(): string { return ZEN_BASE_URL; }
   protected filterModels(models: ApiModel[]): ApiModel[] {
-    return models.filter(m =>
-      !m.id.includes('free') &&
-      !m.id.includes('pickle') &&
-      !m.id.startsWith('gemini-')
-    );
+    return models.filter(m => {
+      if (m.id.startsWith('gemini-')) return false;
+      
+      const caps = getModelCapabilities(m.id);
+      const inputPrice = caps.pricePerMillionInput;
+      const outputPrice = caps.pricePerMillionOutput;
+      const isFree = (inputPrice === undefined || inputPrice === 0) &&
+                     (outputPrice === undefined || outputPrice === 0);
+      
+      return !isFree;
+    });
   }
 
   protected async getModels(): Promise<RoutedModelInfo[]> {
@@ -115,7 +114,7 @@ export class OpenCodeZenProvider extends BaseProvider {
       const data = await res.json() as { data: ApiModel[] };
       const models = this.filterModels(data.data ?? []);
       this.out.appendLine(`[${this.vendor}] ${models.length} models`);
-      return models.map(m => this.toModelInfo(m.id));
+      return this.buildUtilityAliases(models.map(m => this.toModelInfo(m.id)));
     } catch (err) {
       this.out.appendLine(`[${this.vendor}] error: ${err}`);
       return [];
@@ -138,12 +137,45 @@ export class OpenCodeZenProvider extends BaseProvider {
       _apiId: id,
       _apiFormat: ep.apiFormat === 'google' ? 'openai-compatible' : ep.apiFormat,
     };
-    // Build configuration schema based on model capabilities
     info.configurationSchema = this.buildConfigurationSchema(
-      caps.supportedReasoningLevels
+      caps.supportedReasoningLevels,
+      undefined,
+      caps.family,
+      caps.maxInputTokens
     );
 
     return info;
+  }
+
+  private buildUtilityAliases(models: RoutedModelInfo[]): RoutedModelInfo[] {
+    if (models.length === 0) return models;
+    const sortedByPrice = [...models].filter(m => m._pricing?.inputTokenPrice != null)
+      .sort((a, b) => a._pricing!.inputTokenPrice! - b._pricing!.inputTokenPrice!);
+    const sortedBySpeed = [...models].sort(
+      (a, b) => (a.maxInputTokens ?? Infinity) - (b.maxInputTokens ?? Infinity)
+    );
+
+    const result = [...models];
+
+    if (sortedByPrice.length > 0) {
+      const cheapest = sortedByPrice[0];
+      result.push(this.buildAliasModel('opencode-cheap-zen', `Cheap (Zen)`, cheapest, 'Cheapest available model on Zen'));
+    }
+
+    if (sortedBySpeed.length > 0) {
+      const fastest = sortedBySpeed[0];
+      result.push(this.buildAliasModel('opencode-fast-zen', `Fast (Zen)`, fastest, 'Fastest responding model on Zen'));
+    }
+
+    return result;
+  }
+
+  private buildAliasModel(id: string, name: string, target: RoutedModelInfo, _description: string): RoutedModelInfo {
+    return {
+      ...target,
+      id,
+      name,
+    };
   }
 
   override dispose(): void {
@@ -151,4 +183,3 @@ export class OpenCodeZenProvider extends BaseProvider {
     super.dispose();
   }
 }
-

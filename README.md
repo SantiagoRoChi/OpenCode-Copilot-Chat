@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/VS%20Code-1.120+-blue.svg" alt="VS Code Version">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-3.7.0-green.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-4.0.0-green.svg" alt="Version">
 </p>
 
 <p align="center">
@@ -39,16 +39,20 @@ src/
 │   ├── OpenCodeGoProvider.ts        # OpenCode Go tier
 │   ├── OpenCodeServerProvider.ts    # OpenCode Server
 │   └── OpenCodeZenProvider.ts       # OpenCode Zen tier
+├── treeview/
+│   ├── infrastructureProvider.ts    # Servers → Models tree
+│   └── kpisProvider.ts              # Usage metrics tree
 ├── client/                          # API clients
 ├── config/                          # Settings and storage
 └── ...
 ```
 
 **Key Design Decisions:**
-- All providers extend `BaseProvider` (formerly `OpenAICompatibleProvider`)
-- SDK-based handlers (`anthropicChat.ts`, `openaiChat.ts`) use official AI SDK packages
+- All providers extend `BaseProvider`
+- SDK-based handlers use official AI SDK packages
 - Shared utilities in `sdk/utils.ts` eliminate code duplication
 - LM Studio and Ollama use OpenAI-compatible API (not custom SSE parsing)
+- Visual layer is 100% native VS Code TreeView (no webviews)
 
 ## ✨ Supported Providers
 
@@ -134,7 +138,18 @@ Search for "+ Providers on Copilot Chat" in the Extensions panel.
 
 ### From VSIX
 1. Download `.vsix` from [Releases](https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat/releases)
-2. Run: `code --install-extension plus-providers-copilot-chat-3.3.0.vsix`
+2. Run: `code --install-extension plus-providers-copilot-chat-*.vsix`
+
+### From Source
+
+```bash
+git clone https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat.git
+cd OpenCode-Copilot-Chat
+npm install
+npm run esbuild
+npm run package
+code --install-extension plus-providers-copilot-chat-*.vsix
+```
 
 ## 🛠️ Requirements
 
@@ -145,26 +160,6 @@ Search for "+ Providers on Copilot Chat" in the Extensions panel.
 ## 📝 Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
-
-## 📦 Installation
-
-### From VS Code Marketplace
-Search for "+ Providers on Copilot Chat" in the Extensions panel.
-
-### From VSIX
-1. Download `.vsix` from [Releases](https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat/releases)
-2. Run: `code --install-extension opencode-zen-*.vsix`
-
-### From Source
-
-```bash
-git clone https://github.com/SantiagoRoChi/OpenCode-Copilot-Chat.git
-cd OpenCode-Copilot-Chat
-npm install
-npm run esbuild
-npm run package
-code --install-extension opencode-zen-*.vsix
-```
 
 ## 🚀 Uso
 
@@ -198,12 +193,13 @@ Los servidores aparecen como proveedores separados en el selector de modelos.
 |---------|-------------|
 | `Configure Zen Key` | Configurar/limpiar Zen API key |
 | `Configure Go Key` | Configurar/limpiar Go API key |
-| `Add Server` | Añadir servidor OpenCode |
+| `Add Server` | Añadir servidor OpenCode/LM Studio/Ollama |
 | `Edit Server` | Editar servidor existente |
 | `Remove Server` | Eliminar servidor |
+| `Launch Server` | Lanzar servidor offline |
 | `Refresh All Models` | Refrescar catálogo completo |
+| `Refresh Servers` | Refrescar conexiones de servidor |
 | `Show Output` | Ver logs de debug |
-| `Clear Usage Stats` | Limpiar estadísticas |
 
 ## 🏗️ Architecture
 
@@ -221,6 +217,9 @@ extension.ts
 │   ├── OpenCodeGoProvider.ts        # Go tier models (Anthropic SDK)
 │   ├── OpenCodeZenProvider.ts       # Zen tier models
 │   └── OpenCodeServerProvider.ts    # Custom OpenCode servers
+├── treeview/
+│   ├── infrastructureProvider.ts    # Servers → Models sidebar tree
+│   └── kpisProvider.ts              # Usage metrics sidebar tree
 ├── client/
 │   ├── multiServerManager.ts        # Server connection management
 │   ├── modelRegistry.ts             # Model capabilities from models.dev
@@ -228,11 +227,10 @@ extension.ts
 ├── config/
 │   └── secretStorage.ts             # API key storage
 ├── integration/
-│   └── opencodeConnector.ts         # Auto-detect local OpenCode
-├── tools/
-│   └── subagentTool.ts              # opencode_subagent tool
-└── treeview/
-    └── openCodeTreeProvider.ts      # Sidebar panel
+│   ├── opencodeConnector.ts         # Auto-detect local OpenCode
+│   └── openCodeUsageService.ts      # Usage data fetching
+└── tools/
+    └── subagentTool.ts              # opencode_subagent tool
 ```
 
 **Provider Architecture:**
@@ -240,8 +238,35 @@ extension.ts
 - SDK-based handlers (`anthropicChat.ts`, `openaiChat.ts`) use official AI SDK packages
 - Shared utilities in `sdk/utils.ts` eliminate code duplication
 - LM Studio and Ollama use OpenAI-compatible API endpoints
+- Visual layer is 100% native VS Code TreeView — zero webviews
 
-## 🚀 New Features (v3.7.0 — 2026-06-25)
+## 🚀 New Features (v4.0.0 — 2026-06-25)
+
+### Complete Visual Layer Redesign
+
+The entire sidebar UI has been rebuilt from scratch using **native VS Code TreeView components**. No more webviews, no more status bar clutter, no more overlapping visual elements.
+
+#### New Infrastructure Tree View
+- **Servers → Models hierarchy**: Each server is a collapsible root node with its models as children
+- **Semantic icons**: ☁️ cloud providers, 💻 LM Studio, ⚡ Ollama, 🔌 custom servers
+- **Online/offline status**: Offline servers shown with muted styling
+- **Model capabilities**: Each model shows Chat/Tools/Vision badges + context window size
+- **Context menu actions**: Edit, Remove, Launch, Refresh directly from each server node
+
+#### New KPIs Tree View
+- **Summary section**: Total requests, tokens in/out, total cost
+- **By Server breakdown**: Per-provider usage with local/cloud distinction
+- **By Model breakdown**: Per-model usage sorted by total tokens
+- **Auto-refresh**: Updates automatically when usage data changes
+
+#### Removed (intentionally)
+- Status bar items (moved all info into the sidebar)
+- Dashboard webview (replaced by native trees)
+- Usage webview panel (replaced by KPIs tree)
+- Chat status items (using VS Code native chat APIs instead)
+- 6 redundant commands (`showUsage`, `showOutputLog`, `refreshGlobal`, `openUsageWebview`, `openDashboard`, `clearUsage` from palette)
+
+## 🚀 Previous Features (v3.7.0 — 2026-06-25)
 
 ### Context Size Configuration
 Model configuration now includes a `contextSize` selector — choose **Default** (32K), **Large** (64K), or **Full** for supported models in the Copilot model picker. This gives you fine-grained control over prompt window vs. cost.

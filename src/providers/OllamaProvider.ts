@@ -1,7 +1,7 @@
 import { window, LanguageModelChatInformation, LanguageModelChatRequestMessage, ProvideLanguageModelChatResponseOptions, Progress, LanguageModelResponsePart, CancellationToken, LanguageModelChatTool } from 'vscode';
 import { BaseProvider, RoutedModelInfo } from './BaseProvider';
 import { SecretStorage } from '../config/secretStorage';
-import { ServerData } from '../webview/openCodeWebviewProvider';
+import { ServerData } from '../types/serverTypes';
 import { streamOpenAIChat } from './sdk/openaiChat';
 
 interface OllamaModelListItem {

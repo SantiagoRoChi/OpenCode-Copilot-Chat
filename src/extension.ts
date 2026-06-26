@@ -1,25 +1,26 @@
-import { ExtensionContext, window, workspace, lm, commands, QuickPickItem } from 'vscode';
+import { ExtensionContext, window, workspace, lm, commands, QuickPickItem, Disposable } from 'vscode';
 import { OpenCodeFreeProvider } from './providers/OpenCodeFreeProvider';
 import { OpenCodeGoProvider } from './providers/OpenCodeGoProvider';
 import { OpenCodeZenProvider } from './providers/OpenCodeZenProvider';
 import { OpenCodeServerProvider } from './providers/OpenCodeServerProvider';
 import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OllamaProvider } from './providers/OllamaProvider';
-import { StatusBarManager } from './status/statusBar';
 import { OpenCodeConnector } from './integration/opencodeConnector';
 import { SecretStorage } from './config/secretStorage';
 import { MultiServerManager, initMultiServerManager } from './client/multiServerManager';
-import { OpenCodeTreeProvider } from './treeview/openCodeTreeProvider';
 import { OpenCodeSubagentTool } from './tools/subagentTool';
-import { registerOpenCodeChatParticipant, ProviderEntry } from './chat/participant';
-import { DashboardState, OpenCodeWebviewProvider } from './webview/openCodeWebviewProvider';
-import { OpenCodeUsagePanel } from './webview/openCodeUsagePanel';
+import { registerOpenCodeChatParticipant, ProviderEntry, setContextManager } from './chat/participant';
+import { ContextManager } from './context/contextManager';
+import { DiagnosticsProvider } from './context/diagnosticsProvider';
+import { ScmProvider } from './context/scmProvider';
+import { WorkspaceSearchProvider } from './context/workspaceSearch';
+import { SystemPromptProvider } from './providers/SystemPromptProvider';
 import { OpenCodeUsageService } from './integration/openCodeUsageService';
 import { OpenCodeAuthService } from './integration/openCodeAuthService';
 import { initModelRegistry } from './client/modelRegistry';
-import { getChatStatusManager, disposeChatStatusManager } from './status/chatStatusItems';
-import { showMissingConfigNotification, showConnectedNotification, showConnectionErrorNotification } from './notifications/chatNotifications';
-import { UsageTracker, formatUsageOutput } from './usage/UsageTracker';
+import { UsageTracker } from './usage/UsageTracker';
+import { InfrastructureTreeProvider } from './treeview/infrastructureProvider';
+import { KpisTreeProvider } from './treeview/kpisProvider';
 import { randomUUID } from 'crypto';
 
 let freeProvider: OpenCodeFreeProvider;
@@ -29,9 +30,8 @@ let serverProvider: OpenCodeServerProvider;
 let lmStudioProvider: LMStudioProvider;
 let ollamaProvider: OllamaProvider;
 let usageTracker: UsageTracker;
-let statusBar: StatusBarManager;
-let treeProvider: OpenCodeTreeProvider;
-let webviewProvider: OpenCodeWebviewProvider;
+let infraProvider: InfrastructureTreeProvider;
+let kpisProvider: KpisTreeProvider;
 let connector: OpenCodeConnector;
 let secretStorage: SecretStorage;
 let serverManager: MultiServerManager;
@@ -45,6 +45,18 @@ export async function activate(context: ExtensionContext): Promise<void> {
   // Fetch model capabilities (context sizes, vision, reasoning) from models.dev
   // Must complete before providers try to resolve model capabilities
   await initModelRegistry();
+
+  // ── Context Providers ──────────────────────────────────────────────────────
+  const contextManager = new ContextManager();
+  const diagProvider = new DiagnosticsProvider();
+  const scmProvider = new ScmProvider();
+  const wsSearchProvider = new WorkspaceSearchProvider();
+  contextManager.addProvider(diagProvider);
+  contextManager.addProvider(scmProvider);
+  contextManager.addProvider(wsSearchProvider);
+  context.subscriptions.push({ dispose: () => contextManager.dispose() });
+  setContextManager(contextManager);
+
   // ── Providers ────────────────────────────────────────────────────────────
 
   freeProvider = new OpenCodeFreeProvider(context);
@@ -58,20 +70,11 @@ export async function activate(context: ExtensionContext): Promise<void> {
   ]);
 
   // Trigger initial model fetch after loading API keys
-  // This will update the status bar and tree view with real data
   setTimeout(() => {
-    // Force providers to fetch models if they have API keys
-    if (zenProvider.getApiKey()) {
-      zenProvider.refreshModels();
-    }
-    if (goProvider.getApiKey()) {
-      goProvider.refreshModels();
-    }
-    if (freeProvider.getApiKey()) {
-      freeProvider.refreshModels();
-    }
-    // Refresh the UI
-    void refreshTreeView();
+    if (zenProvider.getApiKey()) { zenProvider.refreshModels(); }
+    if (goProvider.getApiKey()) { goProvider.refreshModels(); }
+    if (freeProvider.getApiKey()) { freeProvider.refreshModels(); }
+    void refreshViews();
   }, 1000);
 
   // ── OpenCode local key auto-detection ─────────────────────────────────────
@@ -114,7 +117,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
           await goProvider.setApiKey(newKeys.goKey);
         }
         window.showInformationMessage('+ Providers: New API keys loaded.');
-        void refreshTreeView();
+        void refreshViews();
       }
     })
   );
@@ -162,40 +165,55 @@ export async function activate(context: ExtensionContext): Promise<void> {
     console.log(`+ Providers: Ollama loaded ${ollamaProvider.getServerList().length} persisted server(s).`);
   }
 
+  // ── Wrap providers with system prompt interceptor ─────────────────────────
+  const wrappedFree = new SystemPromptProvider(freeProvider);
+  const wrappedGo = new SystemPromptProvider(goProvider);
+  const wrappedZen = new SystemPromptProvider(zenProvider);
+  const wrappedServer = new SystemPromptProvider(serverProvider);
+  const wrappedLMStudio = new SystemPromptProvider(lmStudioProvider);
+  const wrappedOllama = new SystemPromptProvider(ollamaProvider);
+
+  const wrappedDisposables: Disposable[] = [
+    wrappedFree, wrappedGo, wrappedZen, wrappedServer, wrappedLMStudio, wrappedOllama,
+  ];
+
   // ── Register providers with VS Code LM API ────────────────────────────────
 
   context.subscriptions.push(
-    lm.registerLanguageModelChatProvider('opencode-free',   freeProvider),
-    lm.registerLanguageModelChatProvider('opencode-go',     goProvider),
-    lm.registerLanguageModelChatProvider('opencode-zen',    zenProvider),
-    lm.registerLanguageModelChatProvider('opencode-server', serverProvider),
-    lm.registerLanguageModelChatProvider('lmstudio',        lmStudioProvider),
-    lm.registerLanguageModelChatProvider('ollama-plus',     ollamaProvider),
+    lm.registerLanguageModelChatProvider('opencode-free',   wrappedFree),
+    lm.registerLanguageModelChatProvider('opencode-go',     wrappedGo),
+    lm.registerLanguageModelChatProvider('opencode-zen',    wrappedZen),
+    lm.registerLanguageModelChatProvider('opencode-server', wrappedServer),
+    lm.registerLanguageModelChatProvider('lmstudio',        wrappedLMStudio),
+    lm.registerLanguageModelChatProvider('ollama-plus',     wrappedOllama),
     freeProvider, goProvider, zenProvider, serverProvider, lmStudioProvider, ollamaProvider,
+    ...wrappedDisposables,
   );
 
   // ── Agent Window providers (for Copilot CLI / Agents Window) ──────────────
-  // Register additional providers with '-agent' suffix for the Agents Window.
-  // VS Code shows these in the Agents Window model picker.
   const enableAgentWindow = workspace.getConfiguration('opencode-zen').get<boolean>('enableAgentWindow', true);
-  
+
   if (enableAgentWindow) {
     const agentZenProvider = new OpenCodeZenProvider(context);
     const agentGoProvider = new OpenCodeGoProvider(context);
     const agentFreeProvider = new OpenCodeFreeProvider(context);
-    
-    // Copy API keys from main providers
+
     await agentZenProvider.setApiKey(zenProvider.getApiKey());
     await agentGoProvider.setApiKey(goProvider.getApiKey());
     await agentFreeProvider.setApiKey(freeProvider.getApiKey());
-    
+
+    const wrappedAgentZen = new SystemPromptProvider(agentZenProvider);
+    const wrappedAgentGo = new SystemPromptProvider(agentGoProvider);
+    const wrappedAgentFree = new SystemPromptProvider(agentFreeProvider);
+
     context.subscriptions.push(
-      lm.registerLanguageModelChatProvider('opencode-zen-agent',    agentZenProvider),
-      lm.registerLanguageModelChatProvider('opencode-go-agent',     agentGoProvider),
-      lm.registerLanguageModelChatProvider('opencode-free-agent',   agentFreeProvider),
+      lm.registerLanguageModelChatProvider('opencode-zen-agent',    wrappedAgentZen),
+      lm.registerLanguageModelChatProvider('opencode-go-agent',     wrappedAgentGo),
+      lm.registerLanguageModelChatProvider('opencode-free-agent',   wrappedAgentFree),
       agentZenProvider, agentGoProvider, agentFreeProvider,
+      wrappedAgentZen, wrappedAgentGo, wrappedAgentFree,
     );
-    
+
     // Sync API keys when main providers change
     context.subscriptions.push(
       zenProvider.onDidChangeLanguageModelChatInformation(() => {
@@ -208,7 +226,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
         void agentFreeProvider.setApiKey(freeProvider.getApiKey());
       }),
     );
-    
+
     console.log('[OpenCode] Agent Window providers registered (opencode-*-agent)');
   }
 
@@ -222,66 +240,26 @@ export async function activate(context: ExtensionContext): Promise<void> {
 
   // ── Chat participant (@opencode) ──────────────────────────────────────────
   const chatParticipant = registerOpenCodeChatParticipant(context, [
-    { vendor: 'opencode-zen', displayName: 'OpenCode Zen', provider: zenProvider },
-    { vendor: 'opencode-go', displayName: 'OpenCode Go', provider: goProvider },
-    { vendor: 'opencode-free', displayName: 'OpenCode Free', provider: freeProvider },
-    { vendor: 'lmstudio', displayName: 'LM Studio', provider: lmStudioProvider },
-    { vendor: 'ollama-plus', displayName: 'Ollama+', provider: ollamaProvider },
+    { vendor: 'opencode-zen', displayName: 'OpenCode Zen', provider: wrappedZen },
+    { vendor: 'opencode-go', displayName: 'OpenCode Go', provider: wrappedGo },
+    { vendor: 'opencode-free', displayName: 'OpenCode Free', provider: wrappedFree },
+    { vendor: 'lmstudio', displayName: 'LM Studio', provider: wrappedLMStudio },
+    { vendor: 'ollama-plus', displayName: 'Ollama+', provider: wrappedOllama },
   ]);
   context.subscriptions.push(chatParticipant);
-
-  // ── Chat status items (proposed API) ─────────────────────────────────────
-
-  const chatStatus = getChatStatusManager();
-  context.subscriptions.push({ dispose: () => disposeChatStatusManager() });
-
-  // ── Status bar + Tree view ────────────────────────────────────────────────
-
-  statusBar = new StatusBarManager(() => {
-    const allModels = [
-      ...zenProvider.getCurrentModels(),
-      ...goProvider.getCurrentModels(),
-      ...freeProvider.getCurrentModels(),
-      ...serverProvider.getCurrentModels(),
-      ...lmStudioProvider.getCurrentModels(),
-      ...ollamaProvider.getCurrentModels(),
-    ];
-    return {
-      host: 'opencode',
-      connection: { state: allModels.length > 0 ? 'ok' : 'noModels' },
-      models: allModels.map(m => ({
-        id: m.id,
-        name: m.name,
-        contextLabel: `${m.maxInputTokens.toLocaleString()} ctx`,
-        totalContext: m.maxInputTokens,
-        capabilityLabels: [
-          ...(m.capabilities?.toolCalling ? ['tool-calling'] : []),
-          ...(m.capabilities?.imageInput ? ['vision'] : []),
-        ],
-      })),
-      sessionStats: { requestCount: 0, totalTokens: { prompt: 0, completion: 0, total: 0 } },
-      features: { toolCalling: true, imageInput: false, parallelToolCalling: false, agentTemperature: 0.7 },
-      now: Date.now(),
-    };
-  });
-  statusBar.show();
-  context.subscriptions.push(statusBar);
 
   // ── Usage tracking ────────────────────────────────────────────────────────
 
   usageTracker = new UsageTracker();
-  usageTracker.onDidChangeUsage(stats => {
-    statusBar.updateUsage(stats);
-    void refreshTreeView(); // Update dashboard when usage changes
+  usageTracker.onDidChangeUsage(() => {
+    void refreshViews();
   });
   context.subscriptions.push(usageTracker);
 
   // ── OpenCode API Usage Service ───────────────────────────────────────────
-  // Connect OpenCode API usage data to the UI
   const openCodeUsageService = OpenCodeUsageService.getInstance();
-  openCodeUsageService.onDidChangeUsage(data => {
-    console.log(`[OpenCode] Usage data received: ${data.models.length} models, $${data.totalCost}`);
-    void refreshTreeView();
+  openCodeUsageService.onDidChangeUsage(() => {
+    void refreshViews();
   });
   context.subscriptions.push(openCodeUsageService);
 
@@ -293,14 +271,14 @@ export async function activate(context: ExtensionContext): Promise<void> {
   freeProvider.setOnUsageCallback(usage => {
     requestCounter++;
     usageTracker.recordRequest(
-      `req-${sessionId}-${requestCounter}`,  // requestId
-      sessionId,                              // sessionId
-      'free-model',                           // modelId
-      'Free Model',                           // modelName
-      'opencode-free',                        // provider
+      `req-${sessionId}-${requestCounter}`,
+      sessionId,
+      'free-model',
+      'Free Model',
+      'opencode-free',
       { prompt: usage.prompt, completion: usage.completion, total: usage.total },
-      undefined,                              // duration
-      undefined                               // meta
+      undefined,
+      undefined
     );
   });
 
@@ -332,21 +310,9 @@ export async function activate(context: ExtensionContext): Promise<void> {
     );
   });
 
-  // Refresh dashboard when models change - also update status bar
+  // Refresh tree views when models change
   const handleModelsChanged = () => {
-    void refreshTreeView();
-    const zenCount = zenProvider.getCurrentModels().length;
-    const goCount = goProvider.getCurrentModels().length;
-    const freeCount = freeProvider.getCurrentModels().length;
-    const serverCount = serverProvider.getCurrentModels().length;
-    const lmCount = lmStudioProvider.getCurrentModels().length;
-    const ollamaCount = ollamaProvider.getCurrentModels().length;
-    const totalModels = zenCount + goCount + freeCount + serverCount + lmCount + ollamaCount;
-    if (totalModels > 0) {
-      statusBar.setIdle(totalModels);
-    } else {
-      statusBar.setNoModels();
-    }
+    void refreshViews();
   };
 
   context.subscriptions.push(
@@ -358,16 +324,16 @@ export async function activate(context: ExtensionContext): Promise<void> {
     ollamaProvider.onDidChangeLanguageModelChatInformation(() => handleModelsChanged()),
   );
 
-  treeProvider = new OpenCodeTreeProvider();
+  // ── Tree view providers ───────────────────────────────────────────────────
+
+  infraProvider = new InfrastructureTreeProvider();
   context.subscriptions.push(
-    window.registerTreeDataProvider('opencode-zen-tree', treeProvider)
+    window.registerTreeDataProvider('opencode-zen-infrastructure', infraProvider)
   );
 
-  // ── Webview dashboard ─────────────────────────────────────────────────────
-
-  webviewProvider = new OpenCodeWebviewProvider(context.extensionUri);
+  kpisProvider = new KpisTreeProvider();
   context.subscriptions.push(
-    window.registerWebviewViewProvider(OpenCodeWebviewProvider.viewType, webviewProvider)
+    window.registerTreeDataProvider('opencode-zen-kpis', kpisProvider)
   );
 
   registerCommands(context);
@@ -379,12 +345,9 @@ export async function activate(context: ExtensionContext): Promise<void> {
 
   // Initial refresh with delay to allow providers to load
   console.log('[OpenCode] Starting initial refresh...');
-  setTimeout(() => {
-    console.log('[OpenCode] Refreshing tree view...');
-    void refreshTreeView();
-  }, 1000);
-  setTimeout(() => void refreshTreeView(), 3000);
-  setTimeout(() => void refreshTreeView(), 6000);
+  setTimeout(() => void refreshViews(), 1000);
+  setTimeout(() => void refreshViews(), 3000);
+  setTimeout(() => void refreshViews(), 6000);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -395,141 +358,172 @@ function syncServerProviderFromManager(): void {
   }
 }
 
-async function refreshTreeView(): Promise<void> {
-  console.log('[OpenCode] refreshTreeView called');
-  const allServers: DashboardState['servers'] = [];
+function extractCapabilities(m: { capabilities?: { imageInput?: boolean; toolCalling?: boolean | number } }): string[] {
+  const caps: string[] = [];
+  if (!m.capabilities) return caps;
+  const c = m.capabilities;
+  if (c.toolCalling) caps.push('Tools');
+  if (c.imageInput) caps.push('Vision');
+  return caps;
+}
 
-  for (const conn of serverManager.getConnectedList()) {
-    allServers.push({
-      id: conn.config.id,
-      name: conn.config.name,
-      url: conn.config.url,
-      port: conn.config.port,
-      version: conn.info.version,
-      available: conn.info.available,
-      models: [],
-      providerCount: 0,
-      type: 'opencode',
+function buildInfrastructureData() {
+  const servers: import('./treeview/infrastructureProvider').ServerItem[] = [];
+
+  // Cloud providers
+  for (const [provider, name, type, vendorName] of [
+    [zenProvider, 'OpenCode Zen', 'opencode-zen', 'OpenCode'] as const,
+    [goProvider, 'OpenCode Go', 'opencode-go', 'OpenCode'] as const,
+    [freeProvider, 'OpenCode Free', 'opencode-free', 'OpenCode'] as const,
+  ]) {
+    const key = provider.getApiKey();
+    const models = provider.getCurrentModels();
+    servers.push({
+      id: type,
+      name,
+      type,
+      url: 'opencode.ai',
+      online: models.length > 0 && !!key,
+      keyConfigured: !!key,
+      models: models.map(m => ({
+        id: m.id,
+        name: m.name || m.id,
+        vendor: vendorName,
+        capabilities: extractCapabilities(m),
+        contextSize: m.maxInputTokens || 0,
+      })),
     });
   }
 
-  // Include LM Studio and Ollama servers so they show up in the side panel.
-  if (lmStudioProvider) {
-    for (const s of lmStudioProvider.getServerList()) {
-      allServers.push({ ...s, port: undefined, version: undefined });
-    }
-  }
-  if (ollamaProvider) {
-    for (const s of ollamaProvider.getServerList()) {
-      allServers.push({ ...s, port: undefined, version: undefined });
-    }
-  }
-
-  // Get model families from Zen and Go providers
-  const zenModels = zenProvider.getCurrentModels();
-  const goModels = goProvider.getCurrentModels();
-  console.log(`[OpenCode] Zen models: ${zenModels.length}, Go models: ${goModels.length}`);
-
-  // Build family groups
-  const zenFamilies = buildModelFamilies(zenModels);
-  const goFamilies = buildModelFamilies(goModels);
-  console.log(`[OpenCode] Zen families: ${zenFamilies.length}, Go families: ${goFamilies.length}`);
-
-  // Get internal usage stats
-  const usageStats = usageTracker.getStats();
-
-  // Get OpenCode API usage data
-  const openCodeUsage = OpenCodeUsageService.getInstance().getUsageData();
-
-  // Calculate Zen stats (opencode-free, opencode-zen)
-  let zenTotalTokens = 0;
-  let zenTotalRequests = 0;
-  let zenTotalCost = 0;
-  for (const [provider, data] of Object.entries(usageStats.byProvider)) {
-    if (provider === 'opencode-free' || provider === 'opencode-zen') {
-      zenTotalTokens += data.tokens.total;
-      zenTotalRequests += data.requests;
-      zenTotalCost += data.cost;
-    }
+  // LM Studio servers
+  for (const s of lmStudioProvider.getServerList()) {
+    const serverModels = lmStudioProvider.getCurrentModels().filter(m => m.id.startsWith(`${s.id}:`));
+    servers.push({
+      id: s.id,
+      name: s.name,
+      type: 'lmstudio',
+      url: s.url,
+      online: s.available,
+      keyConfigured: true,
+      models: serverModels.map(m => ({
+        id: m.id,
+        name: m.name || m.id.replace(`${s.id}:`, ''),
+        vendor: 'LM Studio',
+        capabilities: extractCapabilities(m),
+        contextSize: m.maxInputTokens || 0,
+      })),
+    });
   }
 
-  // Calculate Go stats
-  let goTotalTokens = 0;
-  let goTotalRequests = 0;
-  let goTotalCost = 0;
-  for (const [provider, data] of Object.entries(usageStats.byProvider)) {
-    if (provider === 'opencode-go') {
-      goTotalTokens += data.tokens.total;
-      goTotalRequests += data.requests;
-      goTotalCost += data.cost;
-    }
+  // Ollama servers
+  for (const s of ollamaProvider.getServerList()) {
+    const serverModels = ollamaProvider.getCurrentModels().filter(m => m.id.startsWith(`${s.id}:`));
+    servers.push({
+      id: s.id,
+      name: s.name,
+      type: 'ollama',
+      url: s.url,
+      online: s.available,
+      keyConfigured: true,
+      models: serverModels.map(m => ({
+        id: m.id,
+        name: m.name || m.id.replace(`${s.id}:`, ''),
+        vendor: 'Ollama',
+        capabilities: extractCapabilities(m),
+        contextSize: m.maxInputTokens || 0,
+      })),
+    });
   }
 
-  // If we have OpenCode API data, use it to enrich the stats
-  if (openCodeUsage) {
-    // Merge OpenCode API model data with our internal tracking
-    for (const model of openCodeUsage.models) {
-      goTotalCost += model.cost;
-      goTotalTokens += model.inputTokens + model.outputTokens;
-    }
+  // OpenCode custom servers
+  for (const s of serverProvider.getCurrentModels()) {
+    // Server provider models are not grouped by server; use serverManager for grouping
+    // For simplicity, show connected OpenCode servers with models
   }
 
-  const state: DashboardState = {
-    servers: allServers,
-    zenKey: zenProvider.getApiKey() ? '***' : '',
-    goKey: goProvider.getApiKey() ? '***' : '',
-    zenFamilies,
-    goFamilies,
-    zenStats: { totalRequests: zenTotalRequests, totalTokens: { total: zenTotalTokens }, totalCost: zenTotalCost },
-    goStats: { totalRequests: goTotalRequests, totalTokens: { total: goTotalTokens }, totalCost: goTotalCost },
-    goBurnRate: openCodeUsage?.goLimits ? {
-      session: {
-        percent: openCodeUsage.goLimits.rolling.percent,
-        spent: 0,
-        limit: 0,
-      },
-      weekly: {
-        percent: openCodeUsage.goLimits.weekly.percent,
-        spent: 0,
-        limit: 0,
-      },
-      monthly: {
-        percent: openCodeUsage.goLimits.monthly.percent,
-        spent: 0,
-        limit: 0,
-      },
-    } : usageStats.goUsage ? {
-      session: usageStats.goUsage.session,
-      weekly: usageStats.goUsage.weekly,
-      monthly: usageStats.goUsage.monthly,
-    } : undefined,
-  };
+  for (const conn of serverManager.getConnectedList()) {
+    const serverModels = serverProvider.getCurrentModels().filter(m => m.id.startsWith(`${conn.config.id}:`));
+    servers.push({
+      id: conn.config.id,
+      name: conn.config.name,
+      type: 'opencode-server',
+      url: conn.info.baseUrl,
+      online: true,
+      keyConfigured: true,
+      models: serverModels.map(m => ({
+        id: m.id,
+        name: m.name || m.id.replace(`${conn.config.id}:`, ''),
+        vendor: 'OpenCode Server',
+        capabilities: extractCapabilities(m),
+        contextSize: m.maxInputTokens || 0,
+      })),
+    });
+  }
 
-  treeProvider.refresh(state);
-  webviewProvider?.update(state);
-  console.log('[OpenCode] Dashboard updated');
+  // Sort: online first, then by name
+  servers.sort((a, b) => {
+    if (a.online !== b.online) return b.online ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return servers;
 }
 
-function buildModelFamilies(models: { id: string; name: string; family: string }[]): Array<{ name: string; count: number; models: string[] }> {
-  const families = new Map<string, string[]>();
+function buildKpiData(): import('./treeview/kpisProvider').KpiSummary {
+  const stats = usageTracker.getStats();
+  const openCodeUsage = OpenCodeUsageService.getInstance().getUsageData();
 
-  for (const model of models) {
-    const family = model.family || 'Unknown';
-    if (!families.has(family)) {
-      families.set(family, []);
-    }
-    families.get(family)!.push(model.name || model.id);
+  const byServer: Array<{ name: string; requests: number; cost: number; isLocal: boolean }> = [];
+  const byModel: Array<{ name: string; requests: number; cost: number; tokens: number }> = [];
+
+  for (const [provider, data] of Object.entries(stats.byProvider)) {
+    const isLocal = provider === 'lmstudio' || provider === 'ollama-plus';
+    const name = provider === 'opencode-go' ? 'OpenCode Go'
+               : provider === 'opencode-free' ? 'OpenCode Free'
+               : provider === 'opencode-zen' ? 'OpenCode Zen'
+               : provider === 'lmstudio' ? 'LM Studio'
+               : provider === 'ollama-plus' ? 'Ollama'
+               : provider;
+    byServer.push({
+      name,
+      requests: data.requests,
+      cost: data.cost,
+      isLocal,
+    });
   }
 
-  const result: Array<{ name: string; count: number; models: string[] }> = [];
-  for (const [name, modelList] of families) {
-    result.push({ name, count: modelList.length, models: modelList });
+  for (const [modelId, data] of Object.entries(stats.byModel)) {
+    byModel.push({
+      name: modelId,
+      requests: data.requests,
+      cost: data.cost,
+      tokens: data.tokens.total,
+    });
   }
 
-  // Sort by count descending
-  result.sort((a, b) => b.count - a.count);
+  // Sort by tokens desc
+  byModel.sort((a, b) => b.tokens - a.tokens);
 
-  return result;
+  return {
+    totalRequests: stats.totalRequests,
+    totalTokensIn: stats.totalTokens.prompt,
+    totalTokensOut: stats.totalTokens.completion,
+    totalCost: stats.totalCost,
+    byServer,
+    byModel,
+  };
+}
+
+async function refreshViews(): Promise<void> {
+  console.log('[OpenCode] refreshViews called');
+
+  const infra = buildInfrastructureData();
+  infraProvider.refresh(infra);
+
+  const kpis = buildKpiData();
+  kpisProvider.refresh(kpis);
+
+  console.log('[OpenCode] Views refreshed');
 }
 
 interface ServerTypeQuickPickItem extends QuickPickItem {
@@ -558,7 +552,7 @@ function registerCommands(context: ExtensionContext): void {
     await zenProvider.setApiKey(key);
     await freeProvider.setApiKey(key);
     window.showInformationMessage(key ? 'API key saved.' : 'API key cleared.');
-    void refreshTreeView();
+    void refreshViews();
   });
 
   reg('opencode-zen.configureGo', async () => {
@@ -570,7 +564,7 @@ function registerCommands(context: ExtensionContext): void {
     if (key === undefined) return;
     await goProvider.setApiKey(key);
     window.showInformationMessage(key ? 'Go API key saved.' : 'Go API key cleared.');
-    void refreshTreeView();
+    void refreshViews();
   });
 
   reg('opencode-zen.refreshAll', () => {
@@ -579,14 +573,14 @@ function registerCommands(context: ExtensionContext): void {
     freeProvider.refreshModels();
     serverProvider.refreshModels();
     window.showInformationMessage('All models refreshed.');
-    void refreshTreeView();
+    void refreshViews();
   });
 
   reg('opencode-zen.refreshServers', async () => {
     await serverManager.connectAll();
     syncServerProviderFromManager();
     window.showInformationMessage('Servers refreshed.');
-    void refreshTreeView();
+    void refreshViews();
   });
 
   // ── Add Server ────────────────────────────────────────────────────────────
@@ -606,7 +600,7 @@ function registerCommands(context: ExtensionContext): void {
       if (url === undefined) return;
       lmStudioProvider.addServer(`lmstudio-${randomUUID().slice(0, 8)}`, name, url);
       window.showInformationMessage(`LM Studio "${name}" added.`);
-      void refreshTreeView();
+      void refreshViews();
       return;
     }
 
@@ -617,7 +611,7 @@ function registerCommands(context: ExtensionContext): void {
       if (url === undefined) return;
       ollamaProvider.addServer(`ollama-${randomUUID().slice(0, 8)}`, name, url);
       window.showInformationMessage(`Ollama "${name}" added.`);
-      void refreshTreeView();
+      void refreshViews();
       return;
     }
 
@@ -649,7 +643,7 @@ function registerCommands(context: ExtensionContext): void {
     await serverManager.connectAll();
     syncServerProviderFromManager();
     window.showInformationMessage(`Server "${name}" added.`);
-    void refreshTreeView();
+    void refreshViews();
   });
 
   // ── Edit Server ───────────────────────────────────────────────────────────
@@ -686,7 +680,7 @@ function registerCommands(context: ExtensionContext): void {
     await serverManager.connectAll();
     syncServerProviderFromManager();
     window.showInformationMessage(`Server "${name}" updated.`);
-    void refreshTreeView();
+    void refreshViews();
   });
 
   // ── Remove Server ─────────────────────────────────────────────────────────
@@ -722,7 +716,7 @@ function registerCommands(context: ExtensionContext): void {
         await secretStorage.setLocalServerConfigs(configs.filter(c => c.id !== serverId));
       }
       window.showInformationMessage(`Server "${name}" removed.`);
-      void refreshTreeView();
+      void refreshViews();
       return;
     }
 
@@ -738,7 +732,7 @@ function registerCommands(context: ExtensionContext): void {
       serverProvider.removeServer(serverId!);
       await serverManager.connectAll();
       window.showInformationMessage(`Server "${opencodeMatch.name}" removed.`);
-      void refreshTreeView();
+      void refreshViews();
       return;
     }
     const localConfigs = await secretStorage.getLocalServerConfigs();
@@ -750,7 +744,7 @@ function registerCommands(context: ExtensionContext): void {
       else ollamaProvider.removeServer(serverId!);
       await secretStorage.setLocalServerConfigs(localConfigs.filter(c => c.id !== serverId));
       window.showInformationMessage(`Server "${localMatch.name}" removed.`);
-      void refreshTreeView();
+      void refreshViews();
       return;
     }
     window.showInformationMessage('Server not found.');
@@ -787,14 +781,14 @@ function registerCommands(context: ExtensionContext): void {
         const reconnected = await serverManager.reconnect(config.id);
         if (reconnected) {
           syncServerProviderFromManager();
-          void refreshTreeView();
+          void refreshViews();
           return;
         }
       }
       window.showWarningMessage(`Could not connect to "${config.name}". Check the terminal.`);
     } else {
       const ok = await serverManager.launchServer(config);
-      if (ok) { syncServerProviderFromManager(); void refreshTreeView(); }
+      if (ok) { syncServerProviderFromManager(); void refreshViews(); }
       window.showInformationMessage(ok
         ? `Server "${config.name}" launched.`
         : `Could not launch "${config.name}". Is opencode in your PATH?`
@@ -806,7 +800,7 @@ function registerCommands(context: ExtensionContext): void {
   reg('opencode-zen.clearUsage', () => {
     usageTracker.clear();
     window.showInformationMessage('Usage stats cleared.');
-    void refreshTreeView();
+    void refreshViews();
   });
 
   // ── Show output ───────────────────────────────────────────────────────────
@@ -814,62 +808,25 @@ function registerCommands(context: ExtensionContext): void {
     window.showInformationMessage('Use the Output panel and select a provider channel.');
   });
 
-  // ── Show usage stats ──────────────────────────────────────────────────────
-  reg('opencode-zen.showUsage', () => {
-    // Show detailed usage stats in output channel
-    const stats = usageTracker.getStats();
-    const output = formatUsageOutput(stats);
-    
-    // Create or reuse output channel
-    const usageChannel = window.createOutputChannel('OpenCode Usage');
-    usageChannel.clear();
-    usageChannel.appendLine(output);
-    usageChannel.show();
-    
-    // Also focus the dashboard webview
-    if (webviewProvider) {
-      webviewProvider.focus();
-    }
-    void refreshTreeView();
-  });
-
-  // ── Open OpenCode Usage Webview ──────────────────────────────────────────
-  reg('opencode-zen.openUsageWebview', async () => {
-    const panel = OpenCodeUsagePanel.initialize(context);
-    await panel.openLogin();
-  });
-
-  // ── Open Usage Dashboard ─────────────────────────────────────────────────
-  reg('opencode-zen.openDashboard', async () => {
-    const panel = OpenCodeUsagePanel.initialize(context);
-    await panel.openWorkspaceUsage();
-  });
-
   // ── Paste Workspace URL ──────────────────────────────────────────────────
   reg('opencode-zen.pasteWorkspaceUrl', async () => {
-    const panel = OpenCodeUsagePanel.initialize(context);
-    await panel.promptForWorkspaceUrl();
+    // Legacy command — kept for compatibility. Prompts user for workspace URL.
+    const url = await window.showInputBox({
+      title: 'Workspace URL',
+      prompt: 'Enter your OpenCode workspace URL',
+      placeHolder: 'https://opencode.ai/workspace/...',
+      ignoreFocusOut: true,
+    });
+    if (!url) return;
+    // Store in workspace state
+    await context.workspaceState.update('opencodeWorkspaceUrl', url);
+    window.showInformationMessage(`Workspace URL saved: ${url}`);
   });
 
   // ── Start usage tracking ─────────────────────────────────────────────────
   const usageService = OpenCodeUsageService.getInstance();
   usageService.startAutoRefresh(5 * 60 * 1000); // Refresh every 5 minutes
   context.subscriptions.push(usageService);
-
-  // ── Show output log ───────────────────────────────────────────────────────
-  reg('opencode-zen.showOutputLog', () => {
-    commands.executeCommand('workbench.action.output.toggleOutput');
-    window.showInformationMessage('Select "OpenCode" from the output channel list.');
-  });
-
-  // ── Refresh global usage ──────────────────────────────────────────────────
-  reg('opencode-zen.refreshGlobal', () => {
-    const stats = usageTracker.getStats();
-    statusBar.updateUsage(stats);
-    void refreshTreeView();
-    window.showInformationMessage('Global usage refreshed.');
-  });
 }
 
 export function deactivate(): void {}
-

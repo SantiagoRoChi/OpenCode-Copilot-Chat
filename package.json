@@ -2,7 +2,7 @@
   "name": "plus-providers-copilot-chat",
   "displayName": "+ Providers on Copilot Chat",
   "description": "Connect LM Studio, Ollama, and OpenCode servers to GitHub Copilot Chat — local and remote AI models",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "publisher": "SantiagoRomanChillon",
   "icon": "assets/icon.png",
   "license": "MIT",
@@ -18,7 +18,6 @@
     "chatParticipant",
     "languageModelThinkingPart",
     "chatInputNotification",
-    "chatStatusItem",
     "languageModelPricing",
     "languageModelSystem"
   ],
@@ -190,38 +189,6 @@
         "category": "OpenCode Zen"
       },
       {
-        "command": "opencode-zen.showUsage",
-        "title": "Show Usage Stats",
-        "category": "OpenCode Zen"
-      },
-      {
-        "command": "opencode-zen.showOutputLog",
-        "title": "Show Output Log",
-        "category": "OpenCode Zen"
-      },
-      {
-        "command": "opencode-zen.clearUsage",
-        "title": "Clear Usage Stats",
-        "category": "OpenCode Zen"
-      },
-      {
-        "command": "opencode-zen.refreshGlobal",
-        "title": "Refresh Global Usage",
-        "category": "OpenCode Zen"
-      },
-      {
-        "command": "opencode-zen.openUsageWebview",
-        "title": "Login with OpenCode",
-        "category": "OpenCode Zen",
-        "icon": "$(sign-in)"
-      },
-      {
-        "command": "opencode-zen.openDashboard",
-        "title": "Open Usage Dashboard",
-        "category": "OpenCode Zen",
-        "icon": "$(graph)"
-      },
-      {
         "command": "opencode-zen.pasteWorkspaceUrl",
         "title": "Configure Workspace URL",
         "category": "OpenCode Zen",
@@ -265,13 +232,14 @@
     "views": {
       "opencode-zen-sidebar": [
         {
-          "id": "opencode-zen-tree",
-          "name": "OpenCode Zen"
+          "type": "tree",
+          "id": "opencode-zen-infrastructure",
+          "name": "Infrastructure"
         },
         {
-          "type": "webview",
-          "id": "opencode-zen-dashboard",
-          "name": "OpenCode Dashboard"
+          "type": "tree",
+          "id": "opencode-zen-kpis",
+          "name": "KPIs"
         }
       ]
     },
@@ -325,14 +293,36 @@
     "menus": {
       "view/title": [
         {
-          "view": "opencode-zen-dashboard",
+          "view": "opencode-zen-infrastructure",
           "command": "opencode-zen.addServer",
-          "when": "view == opencode-zen-dashboard"
+          "when": "view == opencode-zen-infrastructure"
         },
         {
-          "view": "opencode-zen-dashboard",
+          "view": "opencode-zen-infrastructure",
           "command": "opencode-zen.refreshAll",
-          "when": "view == opencode-zen-dashboard"
+          "when": "view == opencode-zen-infrastructure"
+        }
+      ],
+      "view/item/context": [
+        {
+          "view": "opencode-zen-infrastructure",
+          "command": "opencode-zen.editServer",
+          "when": "view == opencode-zen-infrastructure && viewItem == server"
+        },
+        {
+          "view": "opencode-zen-infrastructure",
+          "command": "opencode-zen.removeServer",
+          "when": "view == opencode-zen-infrastructure && viewItem == server"
+        },
+        {
+          "view": "opencode-zen-infrastructure",
+          "command": "opencode-zen.launchServer",
+          "when": "view == opencode-zen-infrastructure && viewItem == server"
+        },
+        {
+          "view": "opencode-zen-infrastructure",
+          "command": "opencode-zen.refreshServers",
+          "when": "view == opencode-zen-infrastructure && viewItem == server"
         }
       ]
     }

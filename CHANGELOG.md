@@ -1,5 +1,46 @@
 # Changelog
 
+## [4.0.0] - 2026-06-25
+
+### Complete Visual Layer Redesign
+
+Complete rewrite of the visual layer from scratch. Eliminated all webviews, status bar items, and custom chat UI in favor of 100% native VS Code TreeView components.
+
+#### Added
+- **Infrastructure Tree View** (`opencode-zen-infrastructure`): Native VS Code TreeView showing servers → models hierarchy
+  - Servers as collapsible root nodes with semantic icons (cloud, chip, zap, server)
+  - Models as leaf nodes showing capabilities (Chat, Tools, Vision) and context window size
+  - Online/offline status with visual distinction
+  - Context menu actions per server: Edit, Remove, Launch, Refresh
+- **KPIs Tree View** (`opencode-zen-kpis`): Native VS Code TreeView showing usage metrics
+  - Summary section: total requests, tokens in/out, total cost
+  - By Server breakdown: per-provider usage with local/cloud distinction
+  - By Model breakdown: per-model usage sorted by total tokens
+  - Auto-refreshes when usage data changes
+- **Shared types** (`src/types/serverTypes.ts`): Extracted `ServerData` interface to eliminate webview dependencies
+
+#### Removed
+- `src/status/statusBar.ts` — StatusBarManager and all status bar items
+- `src/status/chatStatusItems.ts` — Custom chat status items (using native VS Code APIs instead)
+- `src/notifications/chatNotifications.ts` — Dashboard toast notifications
+- `src/webview/openCodeWebviewProvider.ts` — Dashboard webview (replaced by native trees)
+- `src/webview/openCodeUsagePanel.ts` — Usage webview panel (replaced by KPIs tree)
+- `src/webview/openCodeDashboardPanel.ts` — Dashboard panel helper
+- `src/treeview/openCodeTreeProvider.ts` — Old flat tree view (replaced by hierarchical Infrastructure tree)
+- 6 commands from public palette: `showUsage`, `showOutputLog`, `refreshGlobal`, `openUsageWebview`, `openDashboard`
+- `chatStatusItem` from `enabledApiProposals`
+
+#### Changed
+- `package.json` views: replaced `opencode-zen-tree` + `opencode-zen-dashboard` with `opencode-zen-infrastructure` + `opencode-zen-kpis`
+- `package.json` commands: reduced from 15 to 9 public commands
+- `package.json` menus: updated `view/title` and added `view/item/context` for server actions
+- `extension.ts` rewritten: removed all UI component imports, added tree provider data builders (`buildInfrastructureData`, `buildKpiData`)
+- `LMStudioProvider.ts` and `OllamaProvider.ts`: updated `ServerData` import to new shared types file
+
+#### Fixed
+- Type compatibility: `RoutedModelInfo.capabilities` now properly typed as `LanguageModelChatCapabilities`
+- Casing issue: unified `treeView` → `treeview` directory naming
+
 ## [3.7.0] - 2026-06-25
 
 ### 🚀 Fase 1: Model Management & Configuration Improvements

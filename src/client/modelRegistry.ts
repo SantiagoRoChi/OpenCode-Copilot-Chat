@@ -153,7 +153,59 @@ interface ModelsDevProvider {
 let liveRegistry: Map<string, RegistryEntry> = new Map();
 let lastFetch = 0;
 let fetchInProgress = false;
-const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes in-memory
+const PERSISTENT_CACHE_KEY = 'opencode.modelRegistry.v1';
+
+// Reference to ExtensionContext for persistent caching (set by initModelRegistry)
+let extensionContext: import('vscode').ExtensionContext | undefined;
+
+/** Serialize the live registry to a storable format */
+function serializeRegistry(): string {
+  const obj: Record<string, RegistryEntry> = {};
+  for (const [key, entry] of liveRegistry) {
+    obj[key] = entry;
+  }
+  return JSON.stringify(obj);
+}
+
+/** Deserialize and populate the live registry */
+function deserializeRegistry(data: string): boolean {
+  try {
+    const obj = JSON.parse(data) as Record<string, RegistryEntry>;
+    liveRegistry.clear();
+    for (const [key, entry] of Object.entries(obj)) {
+      liveRegistry.set(key, entry);
+    }
+    return liveRegistry.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Try to load from persistent cache (ExtensionContext.workspaceState) */
+async function loadFromPersistentCache(): Promise<boolean> {
+  if (!extensionContext) return false;
+  try {
+    const cached = extensionContext.workspaceState.get<string>(PERSISTENT_CACHE_KEY);
+    if (cached && deserializeRegistry(cached)) {
+      console.log(`[modelRegistry] Loaded ${liveRegistry.size} models from persistent cache`);
+      return true;
+    }
+  } catch (err) {
+    console.warn('[modelRegistry] Failed to load persistent cache:', err);
+  }
+  return false;
+}
+
+/** Save current registry to persistent cache */
+async function saveToPersistentCache(): Promise<void> {
+  if (!extensionContext || liveRegistry.size === 0) return;
+  try {
+    await extensionContext.workspaceState.update(PERSISTENT_CACHE_KEY, serializeRegistry());
+  } catch (err) {
+    console.warn('[modelRegistry] Failed to save persistent cache:', err);
+  }
+}
 
 async function fetchModelsDev(): Promise<void> {
   if (Date.now() - lastFetch < CACHE_TTL && liveRegistry.size > 0) return;
@@ -191,6 +243,8 @@ async function fetchModelsDev(): Promise<void> {
 
     lastFetch = Date.now();
     console.log(`[modelRegistry] Loaded ${liveRegistry.size} models from models.dev`);
+    // Save to persistent cache after successful fetch
+    void saveToPersistentCache();
   } catch (err) {
     console.warn(`[modelRegistry] Failed to fetch models.dev: ${err}`);
     // Fallback to static data on network error
@@ -234,7 +288,22 @@ function modelsDevToRegistry(id: string, model: ModelsDevModel, provider: 'zen' 
 
 // ── Public API ──
 
-export async function initModelRegistry(): Promise<void> {
+export async function initModelRegistry(context?: import('vscode').ExtensionContext): Promise<void> {
+  // Store context reference for persistent caching
+  if (context) {
+    extensionContext = context;
+  }
+
+  // Try persistent cache first for instant startup
+  const hasPersistentCache = await loadFromPersistentCache();
+
+  if (hasPersistentCache) {
+    // We have cached data — refresh in background without blocking
+    void fetchModelsDev();
+    return;
+  }
+
+  // No cache available — must fetch blocking
   await fetchModelsDev();
 }
 

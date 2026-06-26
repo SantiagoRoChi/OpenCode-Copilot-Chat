@@ -43,8 +43,8 @@ export async function activate(context: ExtensionContext): Promise<void> {
   OpenCodeAuthService.init(context);
 
   // Fetch model capabilities (context sizes, vision, reasoning) from models.dev
-  // Must complete before providers try to resolve model capabilities
-  await initModelRegistry();
+  // Uses persistent cache for instant startup; refreshes in background if stale
+  await initModelRegistry(context);
 
   // ── Context Providers ──────────────────────────────────────────────────────
   const contextManager = new ContextManager();
@@ -129,41 +129,47 @@ export async function activate(context: ExtensionContext): Promise<void> {
 
   syncServerProviderFromManager();
 
-  // ── LM Studio ────────────────────────────────────────────────────────────
+  // ── LM Studio + Ollama (parallel initialization) ─────────────────────────
 
   lmStudioProvider = new LMStudioProvider(secretStorage);
-  await lmStudioProvider.loadPersistedServers();
-
-  if (lmStudioProvider.getServerList().length === 0) {
-    try {
-      const lmUrl = workspace.getConfiguration('lmstudio').get<string>('baseUrl') || 'http://localhost:1234';
-      const health = await fetch(`${lmUrl}/v1/models`, { signal: AbortSignal.timeout(3000) });
-      if (health.ok) {
-        lmStudioProvider.addServer('local', 'Local LM Studio', lmUrl);
-        console.log(`+ Providers: LM Studio connected at ${lmUrl}`);
-      }
-    } catch { /* not running */ }
-  } else {
-    console.log(`+ Providers: LM Studio loaded ${lmStudioProvider.getServerList().length} persisted server(s).`);
-  }
-
-  // ── Ollama ────────────────────────────────────────────────────────────────
-
   ollamaProvider = new OllamaProvider(secretStorage);
-  await ollamaProvider.loadPersistedServers();
 
-  if (ollamaProvider.getServerList().length === 0) {
-    try {
-      const ollamaUrl = workspace.getConfiguration('ollama').get<string>('baseUrl') || 'http://localhost:11434';
-      const health = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
-      if (health.ok) {
-        ollamaProvider.addServer('local', 'Local Ollama', ollamaUrl);
-        console.log(`+ Providers: Ollama connected at ${ollamaUrl}`);
+  await Promise.all([
+    lmStudioProvider.loadPersistedServers(),
+    ollamaProvider.loadPersistedServers(),
+  ]);
+
+  // Parallel health checks for auto-detection
+  await Promise.all([
+    (async () => {
+      if (lmStudioProvider.getServerList().length === 0) {
+        try {
+          const lmUrl = workspace.getConfiguration('lmstudio').get<string>('baseUrl') || 'http://localhost:1234';
+          const health = await fetch(`${lmUrl}/v1/models`, { signal: AbortSignal.timeout(3000) });
+          if (health.ok) {
+            lmStudioProvider.addServer('local', 'Local LM Studio', lmUrl);
+            console.log(`+ Providers: LM Studio connected at ${lmUrl}`);
+          }
+        } catch { /* not running */ }
+      } else {
+        console.log(`+ Providers: LM Studio loaded ${lmStudioProvider.getServerList().length} persisted server(s).`);
       }
-    } catch { /* not running */ }
-  } else {
-    console.log(`+ Providers: Ollama loaded ${ollamaProvider.getServerList().length} persisted server(s).`);
-  }
+    })(),
+    (async () => {
+      if (ollamaProvider.getServerList().length === 0) {
+        try {
+          const ollamaUrl = workspace.getConfiguration('ollama').get<string>('baseUrl') || 'http://localhost:11434';
+          const health = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
+          if (health.ok) {
+            ollamaProvider.addServer('local', 'Local Ollama', ollamaUrl);
+            console.log(`+ Providers: Ollama connected at ${ollamaUrl}`);
+          }
+        } catch { /* not running */ }
+      } else {
+        console.log(`+ Providers: Ollama loaded ${ollamaProvider.getServerList().length} persisted server(s).`);
+      }
+    })(),
+  ]);
 
   // ── Wrap providers with system prompt interceptor ─────────────────────────
   const wrappedFree = new SystemPromptProvider(freeProvider);
@@ -343,11 +349,10 @@ export async function activate(context: ExtensionContext): Promise<void> {
     window.showInformationMessage(`+ Providers: ${connectedCount} OpenCode server(s) connected.`);
   }
 
-  // Initial refresh with delay to allow providers to load
+  // Initial refresh with staggered delays to allow providers to load
   console.log('[OpenCode] Starting initial refresh...');
-  setTimeout(() => void refreshViews(), 1000);
+  setTimeout(() => void refreshViews(), 500);
   setTimeout(() => void refreshViews(), 3000);
-  setTimeout(() => void refreshViews(), 6000);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -514,7 +519,20 @@ function buildKpiData(): import('./treeview/kpisProvider').KpiSummary {
   };
 }
 
+let refreshDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
 async function refreshViews(): Promise<void> {
+  if (refreshDebounceTimer) {
+    clearTimeout(refreshDebounceTimer);
+  }
+
+  refreshDebounceTimer = setTimeout(() => {
+    refreshDebounceTimer = undefined;
+    doRefreshViews();
+  }, 150); // 150ms debounce — batches rapid-fire updates
+}
+
+async function doRefreshViews(): Promise<void> {
   console.log('[OpenCode] refreshViews called');
 
   const infra = buildInfrastructureData();

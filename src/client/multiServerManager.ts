@@ -189,24 +189,34 @@ export class MultiServerManager {
     await this.loadConfigs();
     this.connections.clear();
 
-    for (const config of this.configs) {
-      if (!config.enabled) continue;
+    // Parallel connection to all enabled servers
+    const results = await Promise.allSettled(
+      this.configs
+        .filter(config => config.enabled)
+        .map(async config => {
+          const baseUrl = `${config.url}:${config.port}`;
+          const password = config.hasPassword ? await this.secretStorage.getServerPassword(config.id) : undefined;
+          const client = new ServerApiClient(baseUrl, config.username, password);
 
-      const baseUrl = `${config.url}:${config.port}`;
-      const password = config.hasPassword ? await this.secretStorage.getServerPassword(config.id) : undefined;
-      const client = new ServerApiClient(baseUrl, config.username, password);
+          const health = await client.healthCheck();
+          if (health?.healthy) {
+            const info: ServerInfo = {
+              available: true,
+              port: config.port,
+              version: health.version,
+              healthChecked: true,
+              serverId: config.id,
+              baseUrl,
+            };
+            return { config, info, client } as ConnectedServer;
+          }
+          return undefined;
+        })
+    );
 
-      const health = await client.healthCheck();
-      if (health?.healthy) {
-        const info: ServerInfo = {
-          available: true,
-          port: config.port,
-          version: health.version,
-          healthChecked: true,
-          serverId: config.id,
-          baseUrl,
-        };
-        this.connections.set(config.id, { config, info, client });
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value) {
+        this.connections.set(result.value.config.id, result.value);
       }
     }
 

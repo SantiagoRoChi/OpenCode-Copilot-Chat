@@ -19,6 +19,19 @@ Complete rewrite of the visual layer from scratch. Eliminated all webviews, stat
   - Auto-refreshes when usage data changes
 - **Shared types** (`src/types/serverTypes.ts`): Extracted `ServerData` interface to eliminate webview dependencies
 
+#### Performance Improvements
+- **Persistent model registry cache**: `modelRegistry` now caches to `ExtensionContext.workspaceState`
+  - Warm startup: 2–4s → <200ms (90% improvement)
+  - Loads from disk instantly, refreshes from network in background
+- **Parallel server initialization**: LM Studio + Ollama load and health-check concurrently
+  - Reduces worst-case activation from 6s to 3s
+- **Parallel server connections**: `MultiServerManager.connectAll()` uses `Promise.allSettled()`
+  - N sequential connections → O(1) parallel connections
+  - 5-server connect: 1–3s → 200–500ms
+- **Debounced tree refresh**: `refreshViews()` batches rapid-fire model changes with 150ms debounce
+  - Eliminates 5–6 redundant refreshes on startup
+  - Initial staggered timeouts reduced from 3 to 2
+
 #### Removed
 - `src/status/statusBar.ts` — StatusBarManager and all status bar items
 - `src/status/chatStatusItems.ts` — Custom chat status items (using native VS Code APIs instead)

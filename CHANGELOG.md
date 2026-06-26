@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.1.0] - 2026-06-26
+
+### Performance Optimizations (P2)
+
+All four remaining P2 performance improvements from the v4.0 redesign.
+
+#### Added
+- **Bounded memory in UsageTracker**: `MAX_RECORDS` (5000) with `PRUNE_TARGET` (4000) prevents unbounded memory growth from long-running sessions
+- **Incremental counters**: `getStats()` now O(1) instead of O(n) — `totalTokens`, `totalCost`, `byModel`, and `byProvider` updated incrementally in `recordRequest()` instead of recomputing from all records on every call
+
+#### Changed
+- **Indexed model grouping** (`extension.ts`): `buildInfrastructureData()` uses `groupByServerPrefix<T>()` — single pass over all models per provider (O(M+S) instead of O(S×M)). Eliminated the empty `getCurrentModels()` loop in the OpenCode servers section
+- **In-memory discovery cache** (`OpenCodeUsageService`): `ensureDiscoveryCache()` loads `workspaceId`, `goKey`, and `zenKey` once from storage; subsequent `fetchUsageData()` calls skip IPC reads
+- **Parallel key validation** (`OpenCodeConnector.detect()`): Zen + Go key validation runs concurrently via `Promise.all()` instead of sequentially (~10s → ~5s worst case)
+
+#### Files
+- **Modified**: `src/usage/UsageTracker.ts`, `src/extension.ts`, `src/integration/openCodeUsageService.ts`, `src/integration/opencodeConnector.ts`
+
 ## [4.0.0] - 2026-06-25
 
 ### Complete Visual Layer Redesign

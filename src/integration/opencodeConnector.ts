@@ -34,24 +34,24 @@ export class OpenCodeConnector {
 
     let zenKeyValid = false;
     let goKeyValid = false;
+    const validations: Promise<void>[] = [];
     if (localKeys.zenKey) {
-      try {
-        const r = await fetch('https://opencode.ai/zen/v1/models', {
+      validations.push(
+        fetch('https://opencode.ai/zen/v1/models', {
           headers: { 'Authorization': `Bearer ${localKeys.zenKey}` },
           signal: AbortSignal.timeout(5000),
-        });
-        zenKeyValid = r.ok;
-      } catch { /* ignore */ }
+        }).then(r => { zenKeyValid = r.ok; }).catch(() => { /* ignore */ })
+      );
     }
     if (localKeys.goKey) {
-      try {
-        const r = await fetch('https://opencode.ai/zen/go/v1/models', {
+      validations.push(
+        fetch('https://opencode.ai/zen/go/v1/models', {
           headers: { 'Authorization': `Bearer ${localKeys.goKey}` },
           signal: AbortSignal.timeout(5000),
-        });
-        goKeyValid = r.ok;
-      } catch { /* ignore */ }
+        }).then(r => { goKeyValid = r.ok; }).catch(() => { /* ignore */ })
+      );
     }
+    await Promise.all(validations);
 
     const authPath = getAuthPath();
     const authExists = existsSync(authPath);

@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/VS%20Code-1.120+-blue.svg" alt="VS Code Version">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-4.0.0-green.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-4.1.0-green.svg" alt="Version">
 </p>
 
 <p align="center">
@@ -239,6 +239,16 @@ extension.ts
 - Shared utilities in `sdk/utils.ts` eliminate code duplication
 - LM Studio and Ollama use OpenAI-compatible API endpoints
 - Visual layer is 100% native VS Code TreeView — zero webviews
+
+## 🚀 New Features (v4.1.0 — 2026-06-26)
+
+### P2 Performance Optimizations
+
+- **Incremental stats counters**: `getStats()` now O(1) instead of O(n) — no full recompute on every usage event
+- **Bounded memory**: UsageTracker caps at 5000 records, prunes to 4000 automatically
+- **Cached discovery**: Workspace ID and API keys read from storage once, cached in memory for all subsequent fetches
+- **Parallel key validation**: Zen + Go key validation runs concurrently (up to 2× faster activation)
+- **Indexed model grouping**: Server→model grouping in O(M+S) instead of O(S×M)
 
 ## 🚀 New Features (v4.0.0 — 2026-06-25)
 

@@ -400,9 +400,20 @@ function buildInfrastructureData() {
     });
   }
 
+  // ── Indexed model grouping: O(M+S) instead of O(S×M) ──────────────────
+  function groupByServerPrefix<T extends { id: string }>(models: T[], serverId: string): T[] {
+    const prefix = `${serverId}:`;
+    const result: T[] = [];
+    for (const m of models) {
+      if (m.id.startsWith(prefix)) result.push(m);
+    }
+    return result;
+  }
+
   // LM Studio servers
+  const lmModels = lmStudioProvider.getCurrentModels();
   for (const s of lmStudioProvider.getServerList()) {
-    const serverModels = lmStudioProvider.getCurrentModels().filter(m => m.id.startsWith(`${s.id}:`));
+    const serverModels = groupByServerPrefix(lmModels, s.id);
     servers.push({
       id: s.id,
       name: s.name,
@@ -421,8 +432,9 @@ function buildInfrastructureData() {
   }
 
   // Ollama servers
+  const ollamaModels = ollamaProvider.getCurrentModels();
   for (const s of ollamaProvider.getServerList()) {
-    const serverModels = ollamaProvider.getCurrentModels().filter(m => m.id.startsWith(`${s.id}:`));
+    const serverModels = groupByServerPrefix(ollamaModels, s.id);
     servers.push({
       id: s.id,
       name: s.name,
@@ -441,13 +453,9 @@ function buildInfrastructureData() {
   }
 
   // OpenCode custom servers
-  for (const s of serverProvider.getCurrentModels()) {
-    // Server provider models are not grouped by server; use serverManager for grouping
-    // For simplicity, show connected OpenCode servers with models
-  }
-
+  const serverModels = serverProvider.getCurrentModels();
   for (const conn of serverManager.getConnectedList()) {
-    const serverModels = serverProvider.getCurrentModels().filter(m => m.id.startsWith(`${conn.config.id}:`));
+    const connModels = groupByServerPrefix(serverModels, conn.config.id);
     servers.push({
       id: conn.config.id,
       name: conn.config.name,
@@ -455,7 +463,7 @@ function buildInfrastructureData() {
       url: conn.info.baseUrl,
       online: true,
       keyConfigured: true,
-      models: serverModels.map(m => ({
+      models: connModels.map(m => ({
         id: m.id,
         name: m.name || m.id.replace(`${conn.config.id}:`, ''),
         vendor: 'OpenCode Server',

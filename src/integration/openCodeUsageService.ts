@@ -50,8 +50,23 @@ export class OpenCodeUsageService {
   private readonly _onDidChangeUsage = new EventEmitter<UsageData>();
   readonly onDidChangeUsage = this._onDidChangeUsage.event;
 
+  // ── In-memory discovery cache ──────────────────────────────────────────
+  private discoveryLoaded = false;
+  private cachedWorkspaceId: string | null = null;
+  private cachedGoKey: string | null = null;
+  private cachedZenKey: string | null = null;
+
   private constructor() {
     this.authService = OpenCodeAuthService.getInstance();
+  }
+
+  /** Ensure the in-memory cache is populated (one-time storage read). */
+  private async ensureDiscoveryCache(): Promise<void> {
+    if (this.discoveryLoaded) return;
+    this.cachedWorkspaceId = await this.authService.getWorkspaceId();
+    this.cachedGoKey = await this.authService.getGoKey();
+    this.cachedZenKey = await this.authService.getZenKey();
+    this.discoveryLoaded = true;
   }
 
   public static getInstance(): OpenCodeUsageService {
@@ -91,17 +106,15 @@ export class OpenCodeUsageService {
    * Automatically discovers workspace ID and uses API key for auth.
    */
   async fetchUsageData(): Promise<UsageData | null> {
-    // Try to get workspace ID from storage first
-    let workspaceId = await this.authService.getWorkspaceId();
-    
-    // If not stored, try to discover from the page
+    await this.ensureDiscoveryCache();
+
+    let workspaceId = this.cachedWorkspaceId;
+
     if (!workspaceId) {
-      const goKey = await this.authService.getGoKey();
-      const zenKey = await this.authService.getZenKey();
-      const apiKey = goKey || zenKey;
-      
+      const apiKey = this.cachedGoKey || this.cachedZenKey;
       if (apiKey) {
         workspaceId = await this.discoverWorkspaceId(apiKey);
+        this.cachedWorkspaceId = workspaceId;
         if (workspaceId) {
           await this.authService.setWorkspaceId(workspaceId);
         }
@@ -113,11 +126,7 @@ export class OpenCodeUsageService {
       return null;
     }
 
-    // Get the API key for authentication
-    const goKey = await this.authService.getGoKey();
-    const zenKey = await this.authService.getZenKey();
-    const apiKey = goKey || zenKey;
-
+    const apiKey = this.cachedGoKey || this.cachedZenKey;
     if (!apiKey) {
       console.log('[OpenCode Usage] No API key available');
       return null;

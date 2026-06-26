@@ -131,6 +131,17 @@ export class UsageTracker {
   private readonly _onDidChangeUsage = new EventEmitter<UsageStats>();
   readonly onDidChangeUsage = this._onDidChangeUsage.event;
 
+  // ── Incremental counters (avoid full recompute) ───────────────────────────
+  private totalRequests = 0;
+  private totalTokens: TokenUsage = { prompt: 0, completion: 0, total: 0 };
+  private totalCost = 0;
+  private byModel = new Map<string, { requests: number; tokens: TokenUsage; cost: number }>();
+  private byProvider = new Map<string, { requests: number; tokens: TokenUsage; cost: number }>();
+
+  // ── Memory bounds ─────────────────────────────────────────────────────────
+  private static readonly MAX_RECORDS = 5000;
+  private static readonly PRUNE_TARGET = 4000; // Prune down to this
+
   recordRequest(
     requestId: string,
     sessionId: string,
@@ -145,9 +156,9 @@ export class UsageTracker {
     // Calculate cost if pricing is available
     const cost = pricing ? estimateCost(usage.prompt, usage.completion, pricing) : 0;
 
-    const existing = this.records.findIndex(r => r.requestId === requestId);
+    const timestamp = Date.now();
     const record: UsageRecord = {
-      timestamp: Date.now(),
+      timestamp,
       requestId,
       sessionId,
       modelId,
@@ -159,15 +170,23 @@ export class UsageTracker {
       cost,
     };
 
-    if (existing >= 0) {
-      this.records[existing] = record;
+    const existingIdx = this.records.findIndex(r => r.requestId === requestId);
+    if (existingIdx >= 0) {
+      // Update existing: subtract old values, add new
+      const old = this.records[existingIdx];
+      this.incrementalUpdate(old, -1);
+      this.records[existingIdx] = record;
     } else {
       this.records.push(record);
+      this.totalRequests++;
     }
+
+    // Add new values
+    this.incrementalUpdate(record, 1);
 
     // Track cost entries for period calculation
     this.costEntries.push({
-      timestamp: record.timestamp,
+      timestamp,
       modelId,
       provider,
       promptTokens: usage.prompt,
@@ -179,47 +198,81 @@ export class UsageTracker {
     const cutoff = Date.now() - 31 * 24 * 60 * 60 * 1000;
     this.costEntries = this.costEntries.filter(e => e.timestamp >= cutoff);
 
+    // Prune records if over limit
+    if (this.records.length > UsageTracker.MAX_RECORDS) {
+      const toRemove = this.records.slice(0, this.records.length - UsageTracker.PRUNE_TARGET);
+      for (const r of toRemove) {
+        this.incrementalUpdate(r, -1);
+        this.totalRequests--;
+      }
+      this.records = this.records.slice(-UsageTracker.PRUNE_TARGET);
+    }
+
     this._onDidChangeUsage.fire(this.getStats());
   }
 
+  /** Incrementally update counters from a single record */
+  private incrementalUpdate(record: UsageRecord, sign: 1 | -1): void {
+    const u = record.usage;
+    this.totalTokens.prompt += sign * u.prompt;
+    this.totalTokens.completion += sign * u.completion;
+    this.totalTokens.total += sign * u.total;
+    this.totalCost += sign * (record.cost ?? 0);
+
+    // Update byModel
+    let modelData = this.byModel.get(record.modelId);
+    if (!modelData) {
+      modelData = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 }, cost: 0 };
+      this.byModel.set(record.modelId, modelData);
+    }
+    modelData.requests += sign;
+    modelData.tokens.prompt += sign * u.prompt;
+    modelData.tokens.completion += sign * u.completion;
+    modelData.tokens.total += sign * u.total;
+    modelData.cost += sign * (record.cost ?? 0);
+    if (modelData.requests <= 0) this.byModel.delete(record.modelId);
+
+    // Update byProvider
+    let providerData = this.byProvider.get(record.provider);
+    if (!providerData) {
+      providerData = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 }, cost: 0 };
+      this.byProvider.set(record.provider, providerData);
+    }
+    providerData.requests += sign;
+    providerData.tokens.prompt += sign * u.prompt;
+    providerData.tokens.completion += sign * u.completion;
+    providerData.tokens.total += sign * u.total;
+    providerData.cost += sign * (record.cost ?? 0);
+    if (providerData.requests <= 0) this.byProvider.delete(record.provider);
+  }
+
   getStats(): UsageStats {
-    const totalTokens: TokenUsage = { prompt: 0, completion: 0, total: 0 };
-    let totalCost = 0;
+    // Convert Maps to Records for the public API
     const byModel: Record<string, { requests: number; tokens: TokenUsage; cost: number }> = {};
-    const byProvider: Record<string, { requests: number; tokens: TokenUsage; cost: number }> = {};
-
-    for (const record of this.records) {
-      totalTokens.prompt += record.usage.prompt;
-      totalTokens.completion += record.usage.completion;
-      totalTokens.total += record.usage.total;
-      totalCost += record.cost ?? 0;
-
-      if (!byModel[record.modelId]) {
-        byModel[record.modelId] = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 }, cost: 0 };
-      }
-      byModel[record.modelId].requests++;
-      byModel[record.modelId].tokens.prompt += record.usage.prompt;
-      byModel[record.modelId].tokens.completion += record.usage.completion;
-      byModel[record.modelId].tokens.total += record.usage.total;
-      byModel[record.modelId].cost += record.cost ?? 0;
-
-      if (!byProvider[record.provider]) {
-        byProvider[record.provider] = { requests: 0, tokens: { prompt: 0, completion: 0, total: 0 }, cost: 0 };
-      }
-      byProvider[record.provider].requests++;
-      byProvider[record.provider].tokens.prompt += record.usage.prompt;
-      byProvider[record.provider].tokens.completion += record.usage.completion;
-      byProvider[record.provider].tokens.total += record.usage.total;
-      byProvider[record.provider].cost += record.cost ?? 0;
+    for (const [id, data] of this.byModel) {
+      byModel[id] = {
+        requests: data.requests,
+        tokens: { ...data.tokens },
+        cost: Math.round(data.cost * 10000) / 10000,
+      };
     }
 
-    // Calculate Go usage periods
+    const byProvider: Record<string, { requests: number; tokens: TokenUsage; cost: number }> = {};
+    for (const [id, data] of this.byProvider) {
+      byProvider[id] = {
+        requests: data.requests,
+        tokens: { ...data.tokens },
+        cost: Math.round(data.cost * 10000) / 10000,
+      };
+    }
+
+    // Calculate Go usage periods (still needs costEntries scan)
     const goUsage = this.calculateGoUsage();
 
     return {
-      totalRequests: this.records.length,
-      totalTokens,
-      totalCost: Math.round(totalCost * 10000) / 10000,
+      totalRequests: this.totalRequests,
+      totalTokens: { ...this.totalTokens },
+      totalCost: Math.round(this.totalCost * 10000) / 10000,
       byModel,
       byProvider,
       history: [...this.records],

@@ -25,7 +25,7 @@ export interface TokenUsage {
 }
 
 export async function streamOpenAIChat(
-  apiKey: string,
+  apiKey: string | undefined,
   baseUrl: string,
   modelId: string,
   maxTokens: number | undefined,
@@ -36,7 +36,7 @@ export async function streamOpenAIChat(
   token: CancellationToken,
   onUsage?: (usage: TokenUsage) => void,
 ): Promise<void> {
-  const openai = createOpenAI({ apiKey, baseURL: baseUrl });
+  const openai = createOpenAI({ apiKey: apiKey || undefined, baseURL: baseUrl });
   const tracker = new UsageTracker();
 
   const sdkMessages = convertMessages(messages);

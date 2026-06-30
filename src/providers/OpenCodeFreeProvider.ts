@@ -8,7 +8,6 @@ import { streamOpenAIChat, TokenUsage as OpenAITokenUsage } from './sdk/openaiCh
 import { streamAnthropicChat, TokenUsage as AnthropicTokenUsage } from './sdk/anthropicChat';
 
 export class OpenCodeFreeProvider extends BaseProvider {
-  private apiKey = '';
   private readonly storage: SecretStorage;
   private readonly out = window.createOutputChannel('OpenCode Free');
   private onUsageCallback?: (usage: { prompt: number; completion: number; total: number }) => void;
@@ -24,19 +23,6 @@ export class OpenCodeFreeProvider extends BaseProvider {
     this.onUsageCallback = callback;
   }
 
-  async loadApiKey(): Promise<void> {
-    this.apiKey = await this.storage.getZenKey();  // Free uses same Zen key
-    if (this.apiKey) this.invalidateCache();
-  }
-
-  async setApiKey(key: string): Promise<void> {
-    this.apiKey = key;
-    await this.storage.setZenKey(key);
-    this.refreshModels();
-  }
-
-  getApiKey(): string { return this.apiKey; }
-
   override async provideLanguageModelChatResponse(
     model: LanguageModelChatInformation,
     messages: readonly LanguageModelChatRequestMessage[],
@@ -45,10 +31,6 @@ export class OpenCodeFreeProvider extends BaseProvider {
     token: CancellationToken
   ): Promise<void> {
     const rm = model as RoutedModelInfo; // safe: RoutedModelInfo extends LanguageModelChatInformation with routing data embedded
-    const apiKey = this.apiKey;
-    if (!apiKey) {
-      throw new Error('API key not configured. Use "OpenCode Zen: Configure Zen Key".');
-    }
 
     const tools = (options as unknown as { tools?: LanguageModelChatTool[] }).tools;
     
@@ -61,14 +43,12 @@ export class OpenCodeFreeProvider extends BaseProvider {
     };
 
     if (rm._apiFormat === 'anthropic') {
-      await streamAnthropicChat(
-        apiKey, `${ZEN_BASE_URL}`, rm._apiId,
+      await streamAnthropicChat("",`${ZEN_BASE_URL}`, rm._apiId,
         rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
         handleUsage,
       );
     } else {
-      await streamOpenAIChat(
-        apiKey, `${ZEN_BASE_URL}`, rm._apiId,
+      await streamOpenAIChat("",`${ZEN_BASE_URL}`, rm._apiId,
         rm.maxOutputTokens, messages, tools, modelOpts, progress, token,
         handleUsage,
       );
@@ -80,8 +60,6 @@ export class OpenCodeFreeProvider extends BaseProvider {
     options: { silent: boolean; configuration?: Record<string, unknown> },
     token: CancellationToken
   ): Promise<LanguageModelChatInformation[]> {
-    const configKey = options.configuration?.apiKey as string | undefined;
-    if (configKey && configKey !== this.apiKey) await this.setApiKey(configKey);
     return super.provideLanguageModelChatInformation(options, token);
   }
 
@@ -90,7 +68,6 @@ export class OpenCodeFreeProvider extends BaseProvider {
   protected async getModels(): Promise<RoutedModelInfo[]> {
     try {
       const res = await fetch(`${ZEN_BASE_URL}/models`, {
-        headers: this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {},
         signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) {
@@ -129,7 +106,7 @@ export class OpenCodeFreeProvider extends BaseProvider {
       maxOutputTokens: caps.maxOutputTokens,
       capabilities: { toolCalling: caps.toolCalling, imageInput: caps.imageInput },
       _url: `${ZEN_BASE_URL}${ep.chatEndpoint}`,
-      _headers: { Authorization: `Bearer ${this.apiKey}` },
+      _headers: {},
       _apiId: id,
       _apiFormat: ep.apiFormat === 'google' ? 'openai-compatible' : ep.apiFormat,
       _pricing: caps.pricePerMillionInput !== undefined || caps.pricePerMillionOutput !== undefined ? {

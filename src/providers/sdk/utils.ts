@@ -68,6 +68,7 @@ export function convertMessages(
 ): Array<{ role: string; content: any }> {
   const result: Array<{ role: string; content: any }> = [];
   const toolNameByCallId = trackToolNames(messages);
+  let mergedSystem: string | null = null;
 
   for (const msg of messages) {
     const isAssistant = msg.role === 1;
@@ -78,11 +79,21 @@ export function convertMessages(
         .filter((p): p is LanguageModelTextPart => p instanceof LanguageModelTextPart)
         .map(p => p.value)
         .join('\n\n');
-      result.push({ role: 'system', content: text });
+      // Merge all system messages into one at the start
+      if (text) {
+        mergedSystem = mergedSystem ? `${mergedSystem}\n\n${text}` : text;
+      }
       continue;
     }
 
     const role = isAssistant ? 'assistant' : 'user';
+
+    // If the first non-system message is an assistant response, prepend a
+    // placeholder user query so the Jinja template finds a "user" message.
+    if (result.length === 0 && role === 'assistant') {
+      result.push({ role: 'user', content: [{ type: 'text', text: 'Continue.' }] });
+    }
+
     const textParts: LanguageModelTextPart[] = [];
     const toolCallParts: LanguageModelToolCallPart[] = [];
     const toolResultParts: LanguageModelToolResultPart[] = [];
@@ -135,6 +146,11 @@ export function convertMessages(
     if (contentArray.length > 0) {
       result.push({ role, content: contentArray });
     }
+  }
+
+  // Prepend merged system message at the very beginning
+  if (mergedSystem !== null) {
+    result.unshift({ role: 'system', content: mergedSystem });
   }
 
   return result;

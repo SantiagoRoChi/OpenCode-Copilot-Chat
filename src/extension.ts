@@ -1,4 +1,4 @@
-import { ExtensionContext, window, workspace, lm, commands, QuickPickItem, Disposable } from 'vscode';
+import { ExtensionContext, window, workspace, lm, commands, QuickPickItem, Disposable, CancellationToken, chat } from 'vscode';
 import { OpenCodeFreeProvider } from './providers/OpenCodeFreeProvider';
 import { OpenCodeGoProvider } from './providers/OpenCodeGoProvider';
 import { OpenCodeZenProvider } from './providers/OpenCodeZenProvider';
@@ -22,6 +22,7 @@ import { UsageTracker } from './usage/UsageTracker';
 import { InfrastructureTreeProvider } from './treeview/infrastructureProvider';
 import { KpisTreeProvider } from './treeview/kpisProvider';
 import { randomUUID } from 'crypto';
+import { OpenCodeSessionProvider } from './sessions/opencodeSessionProvider';
 
 let freeProvider: OpenCodeFreeProvider;
 let goProvider: OpenCodeGoProvider;
@@ -64,7 +65,6 @@ export async function activate(context: ExtensionContext): Promise<void> {
   zenProvider  = new OpenCodeZenProvider(context);
 
   await Promise.all([
-    freeProvider.loadApiKey(),
     goProvider.loadApiKey(),
     zenProvider.loadApiKey(),
   ]);
@@ -73,7 +73,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
   setTimeout(() => {
     if (zenProvider.getApiKey()) { zenProvider.refreshModels(); }
     if (goProvider.getApiKey()) { goProvider.refreshModels(); }
-    if (freeProvider.getApiKey()) { freeProvider.refreshModels(); }
+    freeProvider.refreshModels();
     void refreshViews();
   }, 1000);
 
@@ -93,7 +93,6 @@ export async function activate(context: ExtensionContext): Promise<void> {
       const localKeys = await connector.getLocalKeys();
       if (localKeys.zenKey) {
         await zenProvider.setApiKey(localKeys.zenKey);
-        await freeProvider.setApiKey(localKeys.zenKey);
       }
       if (localKeys.goKey) {
         await goProvider.setApiKey(localKeys.goKey);
@@ -111,7 +110,6 @@ export async function activate(context: ExtensionContext): Promise<void> {
       if (choice === 'Yes') {
         if (newKeys.zenKey) {
           await zenProvider.setApiKey(newKeys.zenKey);
-          await freeProvider.setApiKey(newKeys.zenKey);
         }
         if (newKeys.goKey) {
           await goProvider.setApiKey(newKeys.goKey);
@@ -206,8 +204,6 @@ export async function activate(context: ExtensionContext): Promise<void> {
 
     await agentZenProvider.setApiKey(zenProvider.getApiKey());
     await agentGoProvider.setApiKey(goProvider.getApiKey());
-    await agentFreeProvider.setApiKey(freeProvider.getApiKey());
-
     const wrappedAgentZen = new SystemPromptProvider(agentZenProvider);
     const wrappedAgentGo = new SystemPromptProvider(agentGoProvider);
     const wrappedAgentFree = new SystemPromptProvider(agentFreeProvider);
@@ -227,9 +223,6 @@ export async function activate(context: ExtensionContext): Promise<void> {
       }),
       goProvider.onDidChangeLanguageModelChatInformation(() => {
         void agentGoProvider.setApiKey(goProvider.getApiKey());
-      }),
-      freeProvider.onDidChangeLanguageModelChatInformation(() => {
-        void agentFreeProvider.setApiKey(freeProvider.getApiKey());
       }),
     );
 
@@ -254,6 +247,16 @@ export async function activate(context: ExtensionContext): Promise<void> {
   ]);
   context.subscriptions.push(chatParticipant);
 
+  // ── OpenCode CLI Sessions (Copilot Chat history sidebar) ──────────────────
+  const openCodeSessionProvider = new OpenCodeSessionProvider();
+  const openCodeSessionController = chat.createChatSessionItemController('opencode-cli', (token: CancellationToken) =>
+    openCodeSessionProvider.refreshItems(openCodeSessionController, token)
+  );
+  openCodeSessionProvider.setController(openCodeSessionController);
+  context.subscriptions.push(openCodeSessionController);
+  context.subscriptions.push(
+    chat.registerChatSessionContentProvider('opencode-cli', openCodeSessionProvider, chatParticipant)
+  );
   // ── Usage tracking ────────────────────────────────────────────────────────
 
   usageTracker = new UsageTracker();
@@ -381,15 +384,15 @@ function buildInfrastructureData() {
     [goProvider, 'OpenCode Go', 'opencode-go', 'OpenCode'] as const,
     [freeProvider, 'OpenCode Free', 'opencode-free', 'OpenCode'] as const,
   ]) {
-    const key = provider.getApiKey();
     const models = provider.getCurrentModels();
+    const key = provider === freeProvider ? 'free' : (provider as typeof zenProvider).getApiKey();
     servers.push({
       id: type,
       name,
       type,
       url: 'opencode.ai',
-      online: models.length > 0 && !!key,
-      keyConfigured: !!key,
+      online: models.length > 0,
+      keyConfigured: provider === freeProvider || !!key,
       models: models.map(m => ({
         id: m.id,
         name: m.name || m.id,
@@ -576,7 +579,6 @@ function registerCommands(context: ExtensionContext): void {
     });
     if (key === undefined) return;
     await zenProvider.setApiKey(key);
-    await freeProvider.setApiKey(key);
     window.showInformationMessage(key ? 'API key saved.' : 'API key cleared.');
     void refreshViews();
   });

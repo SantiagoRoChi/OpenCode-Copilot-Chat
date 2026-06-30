@@ -276,7 +276,14 @@ The entire sidebar UI has been rebuilt from scratch using **native VS Code TreeV
 - Chat status items (using VS Code native chat APIs instead)
 - 6 redundant commands (`showUsage`, `showOutputLog`, `refreshGlobal`, `openUsageWebview`, `openDashboard`, `clearUsage` from palette)
 
-## 🚀 Previous Features (v3.7.0 — 2026-06-25)
+## 📜 OpenCode CLI Sessions
+The extension now supports natively integrating sessions from the **OpenCode CLI agent** into the Copilot Chat history. 
+
+**Features:**
+- **Persistent History**: All sessions started via `opencode session` are automatically listed in the sidebar.
+- **Read-Only Access**: CLI sessions are optimized for viewing history and inspecting summaries, while maintaining full access to past conversation logs.
+- **Metadata Preservation**: Automatically pulls session titles, model information, and costs from the underlying database or CLI.
+- **Seamless Switching**: Switch between your cloud-based OpenCode sessions and local/remote LLM sessions instantly in the history view.
 
 ### Context Size Configuration
 Model configuration now includes a `contextSize` selector — choose **Default** (32K), **Large** (64K), or **Full** for supported models in the Copilot model picker. This gives you fine-grained control over prompt window vs. cost.

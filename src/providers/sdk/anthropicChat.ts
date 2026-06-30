@@ -25,7 +25,7 @@ export async function streamAnthropicChat(
   token: CancellationToken,
   onUsage?: (usage: TokenUsage) => void,
 ): Promise<void> {
-  const anthropic = createAnthropic({ apiKey: apiKey || undefined, baseURL: baseUrl });
+  const anthropic = createAnthropic({ apiKey: apiKey || 'sk-', baseURL: baseUrl });
 
   const vsCodeMessages = convertMessages(messages);
   const systemMessage = vsCodeMessages.find(m => m.role === 'system');

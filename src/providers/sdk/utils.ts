@@ -68,7 +68,6 @@ export function convertMessages(
 ): Array<{ role: string; content: any }> {
   const result: Array<{ role: string; content: any }> = [];
   const toolNameByCallId = trackToolNames(messages);
-  let mergedSystem: string | null = null;
 
   for (const msg of messages) {
     const isAssistant = msg.role === 1;
@@ -79,10 +78,7 @@ export function convertMessages(
         .filter((p): p is LanguageModelTextPart => p instanceof LanguageModelTextPart)
         .map(p => p.value)
         .join('\n\n');
-      // Merge all system messages into one at the start
-      if (text) {
-        mergedSystem = mergedSystem ? `${mergedSystem}\n\n${text}` : text;
-      }
+      result.push({ role: 'system', content: text });
       continue;
     }
 
@@ -144,16 +140,8 @@ export function convertMessages(
       result.push({ role: 'tool', content: toolResults });
     }
     if (contentArray.length > 0) {
-      const content = contentArray.length === 1 && contentArray[0].type === 'text'
-        ? contentArray[0].text
-        : contentArray;
-      result.push({ role, content });
+      result.push({ role, content: contentArray });
     }
-  }
-
-  // Prepend merged system message at the very beginning
-  if (mergedSystem !== null) {
-    result.unshift({ role: 'system', content: mergedSystem });
   }
 
   return result;

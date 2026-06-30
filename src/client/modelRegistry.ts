@@ -101,7 +101,9 @@ function inferApiFormat(
   modelId: string,
   provider: 'zen' | 'go' = 'zen'
 ): { chatEndpoint: string; apiFormat: ApiFormat } {
-  const hints = provider === 'go' ? GO_FORMAT_HINTS : ZEN_FORMAT_HINTS;
+  const hints = provider === 'go'
+    ? GO_FORMAT_HINTS
+    : [...ZEN_FORMAT_HINTS, ...GO_FORMAT_HINTS.filter(([p]) => !ZEN_FORMAT_HINTS.some(([z]) => z === p))];
   for (const [prefix, fmt] of hints) {
     if (modelId.startsWith(prefix)) return fmt;
   }

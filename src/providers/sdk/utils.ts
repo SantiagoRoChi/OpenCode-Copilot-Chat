@@ -140,7 +140,10 @@ export function convertMessages(
       result.push({ role: 'tool', content: toolResults });
     }
     if (contentArray.length > 0) {
-      result.push({ role, content: contentArray });
+      const content = contentArray.length === 1 && contentArray[0].type === 'text'
+        ? contentArray[0].text
+        : contentArray;
+      result.push({ role, content });
     }
   }
 

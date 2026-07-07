@@ -59,6 +59,7 @@ const FALLBACK_MODELS: Record<string, ModelsDevModel> = {
     id: 'zen:gpt-4o',
     name: 'GPT-4o',
     family: 'openai',
+    sdk: 'openai',
     reasoning: false,
     tool_call: true,
     limit: { context: 128000, output: 4096 },
@@ -85,15 +86,25 @@ const FALLBACK_MODELS: Record<string, ModelsDevModel> = {
 };
 
 /**
- * Derive API endpoint/format from a model's family/provider name.
- * Families come from models.dev or are inferred from the model ID.
+ * Derive API endpoint/format from the `sdk` property returned by models.dev.
+ * This is the authoritative source — models.dev knows exactly which protocol each model speaks.
+ */
+function formatFromSdk(sdk: string): { chatEndpoint: string; apiFormat: ApiFormat } {
+  switch (sdk.toLowerCase()) {
+    case 'openai':    return { chatEndpoint: '/responses', apiFormat: 'openai' };
+    case 'anthropic': return { chatEndpoint: '/messages',  apiFormat: 'anthropic' };
+    case 'google':    return { chatEndpoint: '/models/{modelId}:streamGenerateContent', apiFormat: 'google' };
+    default:          return { chatEndpoint: '/chat/completions', apiFormat: 'openai-compatible' };
+  }
+}
+
+/**
+ * Fallback: derive endpoint/format from family name when models.dev has no `sdk` field.
  */
 function formatFromFamily(family: string): { chatEndpoint: string; apiFormat: ApiFormat } {
   switch (family.toLowerCase()) {
     case 'openai':    return { chatEndpoint: '/responses', apiFormat: 'openai' };
-    case 'anthropic':
-    case 'kimi':
-    case 'qwen':      return { chatEndpoint: '/messages',  apiFormat: 'anthropic' };
+    case 'anthropic': return { chatEndpoint: '/messages',  apiFormat: 'anthropic' };
     case 'google':    return { chatEndpoint: '/models/{modelId}:streamGenerateContent', apiFormat: 'google' };
     default:          return { chatEndpoint: '/chat/completions', apiFormat: 'openai-compatible' };
   }
@@ -121,6 +132,7 @@ interface ModelsDevModel {
   id: string;
   name: string;
   family?: string;
+  sdk?: string;
   attachment?: boolean;
   reasoning?: boolean;
   tool_call?: boolean;
@@ -252,7 +264,7 @@ async function fetchModelsDev(): Promise<void> {
 
 function modelsDevToRegistry(id: string, model: ModelsDevModel, _provider: 'zen' | 'go'): RegistryEntry {
   const family = model.family || inferFamily(id);
-  const fmt = formatFromFamily(family);
+  const fmt = model.sdk ? formatFromSdk(model.sdk) : formatFromFamily(family);
 
   // Vision = modalities.input includes "image" OR "pdf"
   const hasVision = model.modalities?.input?.some(m => m === 'image' || m === 'pdf') ?? false;

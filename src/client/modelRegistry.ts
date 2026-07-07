@@ -84,32 +84,19 @@ const FALLBACK_MODELS: Record<string, ModelsDevModel> = {
   }
 };
 
-// Provider-specific format hints (derived from https://opencode.ai/docs/zen/#endpoints and /go/#endpoints)
-const ZEN_FORMAT_HINTS: Array<[string, { chatEndpoint: string; apiFormat: ApiFormat }]> = [
-  ['gpt-',    { chatEndpoint: '/responses', apiFormat: 'openai' }],
-  ['claude-', { chatEndpoint: '/messages',  apiFormat: 'anthropic' }],
-  ['kimi',    { chatEndpoint: '/messages',  apiFormat: 'anthropic' }],
-  ['minimax-',{ chatEndpoint: '/chat/completions', apiFormat: 'openai-compatible' }],
-  ['qwen',    { chatEndpoint: '/messages',  apiFormat: 'anthropic' }],
-  // gemini-* uses a non-standard /models/{id} Google format — excluded from provider
-];
-
-const GO_FORMAT_HINTS: Array<[string, { chatEndpoint: string; apiFormat: ApiFormat }]> = [
-  ['minimax-', { chatEndpoint: '/messages', apiFormat: 'anthropic' }],
-  ['qwen',     { chatEndpoint: '/messages', apiFormat: 'anthropic' }],
-];
-
-function inferApiFormat(
-  modelId: string,
-  provider: 'zen' | 'go' = 'zen'
-): { chatEndpoint: string; apiFormat: ApiFormat } {
-  const hints = provider === 'go'
-    ? GO_FORMAT_HINTS
-    : [...ZEN_FORMAT_HINTS, ...GO_FORMAT_HINTS.filter(([p]) => !ZEN_FORMAT_HINTS.some(([z]) => z === p))];
-  for (const [prefix, fmt] of hints) {
-    if (modelId.startsWith(prefix)) return fmt;
+/**
+ * Derive API endpoint/format from a model's family/provider name.
+ * Families come from models.dev or are inferred from the model ID.
+ */
+function formatFromFamily(family: string): { chatEndpoint: string; apiFormat: ApiFormat } {
+  switch (family.toLowerCase()) {
+    case 'openai':    return { chatEndpoint: '/responses', apiFormat: 'openai' };
+    case 'anthropic':
+    case 'kimi':
+    case 'qwen':      return { chatEndpoint: '/messages',  apiFormat: 'anthropic' };
+    case 'google':    return { chatEndpoint: '/models/{modelId}:streamGenerateContent', apiFormat: 'google' };
+    default:          return { chatEndpoint: '/chat/completions', apiFormat: 'openai-compatible' };
   }
-  return { chatEndpoint: '/chat/completions', apiFormat: 'openai-compatible' };
 }
 
 function inferFamily(modelId: string): string {
@@ -263,8 +250,9 @@ async function fetchModelsDev(): Promise<void> {
   }
 }
 
-function modelsDevToRegistry(id: string, model: ModelsDevModel, provider: 'zen' | 'go'): RegistryEntry {
-  const fmt = inferApiFormat(id, provider);
+function modelsDevToRegistry(id: string, model: ModelsDevModel, _provider: 'zen' | 'go'): RegistryEntry {
+  const family = model.family || inferFamily(id);
+  const fmt = formatFromFamily(family);
 
   // Vision = modalities.input includes "image" OR "pdf"
   const hasVision = model.modalities?.input?.some(m => m === 'image' || m === 'pdf') ?? false;
@@ -273,7 +261,7 @@ function modelsDevToRegistry(id: string, model: ModelsDevModel, provider: 'zen' 
     chatEndpoint: fmt.chatEndpoint,
     apiFormat: fmt.apiFormat,
     name: model.name || id,
-    family: inferFamily(id),
+    family,
     maxInputTokens: model.limit?.context ?? DEFAULT_INPUT,
     maxOutputTokens: model.limit?.output ?? DEFAULT_OUTPUT,
     imageInput: model.attachment ?? hasVision,  // Use attachment OR modalities
@@ -323,13 +311,19 @@ export function isModelRegistryPopulated(): boolean {
 }
 
 export function getModelEndpoint(provider: Provider, modelId: string): ModelEndpoint {
-  const entry = liveRegistry.get(`${provider}:${modelId}`);
-  if (entry) {
-    return { chatEndpoint: entry.chatEndpoint, apiFormat: entry.apiFormat };
+  // 1. Exact match for the requested provider
+  const exact = liveRegistry.get(`${provider}:${modelId}`);
+  if (exact) return { chatEndpoint: exact.chatEndpoint, apiFormat: exact.apiFormat };
+
+  // 2. Try other providers — Zen and Go entries are equivalent
+  const other: Provider[] = provider === 'zen' ? ['go', 'free'] : provider === 'go' ? ['zen', 'free'] : ['zen', 'go'];
+  for (const p of other) {
+    const entry = liveRegistry.get(`${p}:${modelId}`);
+    if (entry) return { chatEndpoint: entry.chatEndpoint, apiFormat: entry.apiFormat };
   }
-  // Fallback: infer from model ID using provider-aware hints
-  const hint: 'zen' | 'go' = provider === 'go' ? 'go' : 'zen';
-  return inferApiFormat(modelId, hint);
+
+  // 3. Fallback: infer from family
+  return formatFromFamily(inferFamily(modelId));
 }
 
 export function getModelCapabilities(modelId: string): ModelCapabilities {

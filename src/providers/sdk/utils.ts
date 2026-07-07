@@ -87,7 +87,7 @@ export function convertMessages(
     // If the first non-system message is an assistant response, prepend a
     // placeholder user query so the Jinja template finds a "user" message.
     if (result.length === 0 && role === 'assistant') {
-      result.push({ role: 'user', content: 'Continue.' });
+      result.push({ role: 'user', content: [{ type: 'text', text: 'Continue.' }] });
     }
 
     const textParts: LanguageModelTextPart[] = [];
@@ -140,10 +140,7 @@ export function convertMessages(
       result.push({ role: 'tool', content: toolResults });
     }
     if (contentArray.length > 0) {
-      const content = contentArray.length === 1 && contentArray[0].type === 'text'
-        ? contentArray[0].text
-        : contentArray;
-      result.push({ role, content });
+      result.push({ role, content: contentArray });
     }
   }
 

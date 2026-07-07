@@ -88,6 +88,8 @@ const FALLBACK_MODELS: Record<string, ModelsDevModel> = {
 const ZEN_FORMAT_HINTS: Array<[string, { chatEndpoint: string; apiFormat: ApiFormat }]> = [
   ['gpt-',    { chatEndpoint: '/responses', apiFormat: 'openai' }],
   ['claude-', { chatEndpoint: '/messages',  apiFormat: 'anthropic' }],
+  ['kimi',    { chatEndpoint: '/messages',  apiFormat: 'anthropic' }],
+  ['minimax-',{ chatEndpoint: '/chat/completions', apiFormat: 'openai-compatible' }],
   ['qwen',    { chatEndpoint: '/messages',  apiFormat: 'anthropic' }],
   // gemini-* uses a non-standard /models/{id} Google format — excluded from provider
 ];

@@ -81,8 +81,7 @@ export class OpenCodeFreeProvider extends BaseProvider {
         const caps = getModelCapabilities(m.id);
         const inputPrice = caps.pricePerMillionInput;
         const outputPrice = caps.pricePerMillionOutput;
-        const isFree = (inputPrice === undefined || inputPrice === 0) &&
-                       (outputPrice === undefined || outputPrice === 0);
+        const isFree = inputPrice === 0 && outputPrice === 0;
         return isFree;
       });
       
